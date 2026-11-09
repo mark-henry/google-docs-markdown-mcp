@@ -170,7 +170,9 @@ describe('DocsService', () => {
       expect(mockDocsAPI.documents.batchUpdate).toHaveBeenCalledWith({
         documentId: 'test-doc-id',
         requestBody: {
-          requests: [{ insertText: { text: ' Appended' } }],
+          requests: [
+            { insertText: { text: ' Appended', endOfSegmentLocation: {} } },
+          ],
         },
       });
       expect(result.content[0].text).toContain(

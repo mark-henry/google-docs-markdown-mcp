@@ -295,13 +295,14 @@ export class DocsService {
       const id = extractDocId(documentId) || documentId;
       const docs = await this.getDocsClient();
 
-      // Optimize: when appending to the main body, omit location to skip
-      // an extra documents.get API call — the Docs API auto-appends.
+      // Optimize: when appending to the main body, use endOfSegmentLocation
+      // to skip an extra documents.get API call. The API rejects insertText
+      // with neither location nor endOfSegmentLocation set.
       if (position === 'end' && !tabId) {
         await docs.documents.batchUpdate({
           documentId: id,
           requestBody: {
-            requests: [{ insertText: { text } }],
+            requests: [{ insertText: { text, endOfSegmentLocation: {} } }],
           },
         });
       } else {
