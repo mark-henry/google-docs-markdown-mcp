@@ -27,7 +27,7 @@ The Google Docs API speaks in character indices: insert at 1,482, bold 1,490–1
 - **Quote text to say where.** `after: "the paragraph about pricing"`. The quote must match exactly once; if it's ambiguous, the error lists every match with context so the agent can quote more.
 - **Safe by construction.** Every edit is one atomic `batchUpdate` pinned to the revision it read. If a person edits the doc in between, the call fails and changes nothing.
 - **Suggest mode.** `mode: "suggest"` records edits as Google Docs suggestions, so a human approves what the agent wrote.
-- **Comments.** `docs.comment` anchors a comment to quoted text.
+- **Comments and collaborators.** Comment on quoted text, list threads with who said what, reply and resolve, and see what other editors changed since your last read.
 - **Multiple Google accounts.** Run one instance per account, each with its own sign-in.
 - **Works with personal Gmail.** Google's official Docs MCP server is a developer preview limited to Workspace-domain accounts; this works with any Google account.
 
@@ -102,8 +102,13 @@ claude mcp add --scope user gdocs-personal \
 | `docs.insertMarkdown`  | Inserts formatted paragraphs `at: "beginning" \| "end"`, or `after` / `before` the paragraph containing quoted text.                                                                 |
 | `docs.replaceMarkdown` | Replaces quoted text. Inline markdown replaces just the quote, so a heading stays a heading; block markdown replaces every paragraph the quote touches. Empty markdown deletes them. |
 | `docs.comment`         | Adds a comment anchored to quoted text.                                                                                                                                              |
+| `docs.listComments`    | Lists comment threads (ID, open/resolved, quoted text, each post's author and time) and pending suggestions.                                                                         |
+| `docs.replyToComment`  | Replies to a thread by ID, and/or resolves or reopens it.                                                                                                                            |
+| `docs.changesSince`    | Shows what others changed since your last `readMarkdown`: a markdown diff plus new comments and suggestions, with your own edits through this server left out.                       |
 
 All write tools take `tabId` (default: first tab) and `mode: "edit" | "suggest"`.
+
+`changesSince` keeps a short history of markdown snapshots per doc on your machine, in `~/.local/state/google-docs-markdown-mcp/<account>/`. The Docs API doesn't say who typed a given change, so text diffs are unattributed; comment and suggestion authors are shown.
 
 ### Supported markdown
 
@@ -134,6 +139,7 @@ Known limits: nested items under a numbered list use Google's numbered preset, s
 | `WORKSPACE_ACCOUNT`                                   | Name of the stored sign-in to use (one per Google account).                                         |
 | `WORKSPACE_LOGIN_HINT`                                | Email address to preselect on the Google sign-in page.                                              |
 | `WORKSPACE_CLIENT_ID`, `WORKSPACE_CLOUD_FUNCTION_URL` | Your own OAuth client and token-exchange endpoint (see below).                                      |
+| `WORKSPACE_STATE_DIR`                                 | Where `changesSince` keeps its snapshots.                                                           |
 | `WORKSPACE_FEATURE_OVERRIDES`                         | Enable or disable tool groups (see [docs/feature-configuration.md](docs/feature-configuration.md)). |
 
 ## Privacy and authentication

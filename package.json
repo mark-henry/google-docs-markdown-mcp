@@ -1,6 +1,6 @@
 {
   "name": "gemini-workspace-extension",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server that lets AI agents read and edit Google Docs in markdown, with quoted-text anchors, suggest mode and multiple accounts. Fork of the Gemini CLI Workspace extension.",
   "private": true,
   "bin": {
@@ -37,6 +37,7 @@
     "@googleapis/docs": "^9.3.0",
     "@googleapis/drive": "^20.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "diff": "^9.0.0",
     "google-auth-library": "^10.9.0",
     "googleapis": "^173.0.0",
     "keytar": "^7.9.0",

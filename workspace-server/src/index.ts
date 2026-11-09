@@ -536,6 +536,59 @@ async function main() {
     docsMarkdownService.comment,
   );
 
+  registerTool(
+    'docs.listComments',
+    {
+      description:
+        "Lists a Google Doc's comment threads (thread ID, open/resolved, the quoted text each is on, every post with author and time) and its pending suggestions (ID, author, time, what they change). Posts by the signed-in user are marked (you). Use a thread ID with docs.replyToComment.",
+      inputSchema: {
+        documentId: mdDocId,
+        includeResolved: z
+          .boolean()
+          .optional()
+          .describe('Also list resolved threads. Default false.'),
+      },
+    },
+    docsMarkdownService.listComments,
+  );
+
+  registerTool(
+    'docs.replyToComment',
+    {
+      description:
+        'Replies to a comment thread by ID (from docs.listComments), and/or resolves or reopens it.',
+      inputSchema: {
+        documentId: mdDocId,
+        commentId: z.string().describe('Thread ID from docs.listComments.'),
+        reply: z.string().optional().describe('Plain-text reply.'),
+        action: z
+          .enum(['resolve', 'reopen'])
+          .optional()
+          .describe('Resolve or reopen the thread (with or without a reply).'),
+      },
+    },
+    docsMarkdownService.replyToComment,
+  );
+
+  registerTool(
+    'docs.changesSince',
+    {
+      description:
+        "Shows what other people changed in a doc tab since you last read it with docs.readMarkdown (or since an earlier revisionId from a readMarkdown header): a markdown diff of the text, plus new comments, replies and suggestions by others. Your own edits through these tools are left out. Call docs.readMarkdown once first to set the baseline; each call then moves the baseline forward. Who typed a text change isn't available from the Docs API; comment and suggestion authors are.",
+      inputSchema: {
+        documentId: mdDocId,
+        revisionId: z
+          .string()
+          .optional()
+          .describe(
+            'Diff from this earlier revision (shown in readMarkdown headers) instead of from your last read.',
+          ),
+        tabId: mdTabId,
+      },
+    },
+    docsMarkdownService.changesSince,
+  );
+
   // Slides tools
   registerTool(
     'slides.getText',
