@@ -31,6 +31,8 @@ module.exports = {
       moduleNameMapper: {
         '^@/(.*)$': '<rootDir>/workspace-server/src/$1',
         '\\.wasm$': '<rootDir>/workspace-server/src/__tests__/mocks/wasm.js',
+        // marked's package exports are ESM-only for CommonJS resolvers; use its UMD build.
+        '^marked$': '<rootDir>/node_modules/marked/lib/marked.umd.js',
       },
       roots: ['<rootDir>/workspace-server/src'],
       setupFilesAfterEnv: ['<rootDir>/workspace-server/src/__tests__/setup.ts'],

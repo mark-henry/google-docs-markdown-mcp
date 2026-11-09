@@ -333,6 +333,8 @@ export class AuthManager {
       scope: this.scopes,
       state: state, // Pass our JSON payload in the state
       prompt: 'consent', // Make sure we get a refresh token
+      // Preselect the intended account when running one instance per account.
+      login_hint: process.env['WORKSPACE_LOGIN_HINT'] || undefined,
     });
 
     const loginCompletePromise = new Promise<void>((resolve, reject) => {

@@ -1,7 +1,7 @@
 {
   "name": "gemini-workspace-extension",
-  "version": "0.0.8",
-  "description": "Google Workspace Server Extension",
+  "version": "0.1.0",
+  "description": "MCP server that lets AI agents read and edit Google Docs in markdown, with quoted-text anchors, suggest mode and multiple accounts. Fork of the Gemini CLI Workspace extension.",
   "private": true,
   "bin": {
     "gemini-workspace-server": "workspace-server/dist/index.js"
@@ -39,7 +39,8 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "google-auth-library": "^10.9.0",
     "googleapis": "^173.0.0",
-    "keytar": "^7.9.0"
+    "keytar": "^7.9.0",
+    "marked": "^18.1.3"
   },
   "devDependencies": {
     "@jest/globals": "^30.4.1",
@@ -66,23 +67,28 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gemini-cli-extensions/workspace.git"
+    "url": "git+https://github.com/mark-henry/google-docs-markdown-mcp.git"
   },
   "keywords": [
-    "google-workspace",
-    "gmail",
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
     "google-docs",
+    "markdown",
+    "claude",
+    "claude-code",
+    "cursor",
+    "gemini-cli",
+    "ai-agents",
+    "google-workspace",
     "google-drive",
-    "google-calendar",
-    "google-chat",
-    "google-people",
-    "google-sheets",
-    "google-slides",
-    "gemini-cli"
+    "gmail",
+    "google-calendar"
   ],
-  "author": "Allen Hutchison",
+  "author": "Mark Henry (fork); Allen Hutchison (upstream)",
   "license": "Apache-2.0",
   "overrides": {
     "vite": "$vite"
-  }
+  },
+  "homepage": "https://github.com/mark-henry/google-docs-markdown-mcp#readme"
 }

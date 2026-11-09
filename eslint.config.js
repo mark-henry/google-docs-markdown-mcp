@@ -94,13 +94,17 @@ module.exports = [
           source: 'string',
           content: [
             '@license',
-            'Copyright (year) Google LLC',
+            'Copyright (year) (holder)',
             'SPDX-License-Identifier: Apache-2.0',
           ].join('\n'),
           patterns: {
             year: {
               pattern: '202[5-6]',
               defaultValue: '2026',
+            },
+            holder: {
+              pattern: 'Google LLC|Mark Henry',
+              defaultValue: 'Mark Henry',
             },
           },
         },

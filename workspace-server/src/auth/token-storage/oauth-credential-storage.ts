@@ -9,7 +9,9 @@ import { HybridTokenStorage } from './hybrid-token-storage';
 import type { OAuthCredentials } from './types';
 
 const KEYCHAIN_SERVICE_NAME = 'gemini-cli-workspace-oauth';
-const MAIN_ACCOUNT_KEY = 'main-account';
+// WORKSPACE_ACCOUNT lets several server instances keep separate sign-ins
+// (e.g. one per Google account). Unset keeps the original single-account key.
+const MAIN_ACCOUNT_KEY = process.env['WORKSPACE_ACCOUNT'] || 'main-account';
 
 export class OAuthCredentialStorage {
   private static storage: HybridTokenStorage = new HybridTokenStorage(

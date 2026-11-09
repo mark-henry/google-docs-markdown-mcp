@@ -11,6 +11,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { AuthManager } from './auth/AuthManager';
 import { DocsService } from './services/DocsService';
+import { DocsMarkdownService } from './services/DocsMarkdownService';
 import { DriveService } from './services/DriveService';
 import { CalendarService } from './services/CalendarService';
 import { ChatService } from './services/ChatService';
@@ -194,6 +195,7 @@ async function main() {
 
   const driveService = new DriveService(authManager);
   const docsService = new DocsService(authManager);
+  const docsMarkdownService = new DocsMarkdownService(authManager);
   const peopleService = new PeopleService(authManager);
   const calendarService = new CalendarService(authManager);
   const chatService = new ChatService(authManager);
@@ -442,6 +444,96 @@ async function main() {
       },
     },
     docsService.formatText,
+  );
+
+  // Markdown-level Docs tools: callers quote document text to say where;
+  // index arithmetic happens server-side against the document structure.
+  const mdDocId = z.string().describe('The ID or URL of the document.');
+  const mdTabId = z
+    .string()
+    .optional()
+    .describe('Tab ID. Defaults to the first tab.');
+  const mdMode = z
+    .enum(['edit', 'suggest'])
+    .optional()
+    .describe(
+      '"edit" (default) changes the document; "suggest" records the change as suggestions for the owner to accept.',
+    );
+  const quoteHelp =
+    'Quote text exactly as it appears in the document (readMarkdown output, markdown markers included, is fine). It must match exactly one place; on ambiguity the error lists the matches.';
+
+  registerTool(
+    'docs.readMarkdown',
+    {
+      description:
+        'Reads a Google Doc tab as markdown (headings, lists, bold/italic/strikethrough/code, links, tables). Quote text from this output as anchors for docs.insertMarkdown, docs.replaceMarkdown and docs.comment.',
+      inputSchema: { documentId: mdDocId, tabId: mdTabId },
+    },
+    docsMarkdownService.readMarkdown,
+  );
+
+  registerTool(
+    'docs.insertMarkdown',
+    {
+      description:
+        'Inserts markdown into a Google Doc as formatted paragraphs (headings, paragraphs, bulleted/numbered/nested lists, code blocks, blockquotes; inline bold, italic, strikethrough, code, links). Give exactly one of `at`, `after`, `before`. New paragraphs go before or after the whole paragraph containing the quoted text. Atomic: fails without changing anything if the doc changed since it was read.',
+      inputSchema: {
+        documentId: mdDocId,
+        markdown: z.string().describe('The markdown to insert.'),
+        at: z
+          .enum(['beginning', 'end'])
+          .optional()
+          .describe('Insert at the beginning or end of the tab.'),
+        after: z
+          .string()
+          .optional()
+          .describe(
+            `Insert after the paragraph containing this text. ${quoteHelp}`,
+          ),
+        before: z
+          .string()
+          .optional()
+          .describe(
+            `Insert before the paragraph containing this text. ${quoteHelp}`,
+          ),
+        tabId: mdTabId,
+        mode: mdMode,
+      },
+    },
+    docsMarkdownService.insertMarkdown,
+  );
+
+  registerTool(
+    'docs.replaceMarkdown',
+    {
+      description:
+        "Replaces quoted text in a Google Doc with markdown. If the markdown is a single plain paragraph and the quote lies within one paragraph, only the quoted text is replaced (the paragraph keeps its style, e.g. a heading stays a heading). Otherwise every paragraph the quote touches is replaced by the markdown's paragraphs. Empty markdown deletes those paragraphs. To replace a whole section, quote from its heading through its last line.",
+      inputSchema: {
+        documentId: mdDocId,
+        find: z.string().describe(`Text to replace. ${quoteHelp}`),
+        markdown: z.string().describe('Replacement markdown.'),
+        tabId: mdTabId,
+        mode: mdMode,
+      },
+    },
+    docsMarkdownService.replaceMarkdown,
+  );
+
+  registerTool(
+    'docs.comment',
+    {
+      description:
+        'Adds a comment to a Google Doc, anchored to the quoted text.',
+      inputSchema: {
+        documentId: mdDocId,
+        anchor: z
+          .string()
+          .describe(`Text to attach the comment to. ${quoteHelp}`),
+        comment: z.string().describe('Plain-text comment.'),
+        tabId: mdTabId,
+      },
+    },
+    docsMarkdownService.comment,
   );
 
   // Slides tools
