@@ -35,6 +35,14 @@ export function insertBefore(md: MdDoc, p: DocParagraph, tabId?: string): Edit {
  * table cell, which a plain insert at p.end would not.
  */
 export function insertAfter(md: MdDoc, p: DocParagraph, tabId?: string): Edit {
+  if (p.end - p.start === 1) {
+    // p is empty (just its newline), as in a new doc: fill it rather than
+    // leaving a blank line above the new content.
+    const requests: Request[] = [
+      insertText(p.start, md.text.slice(0, -1), tabId),
+    ];
+    return finishBlock(md, p.start, requests, tabId);
+  }
   const at = p.end - 1;
   const requests: Request[] = [
     insertText(at, '\n' + md.text.slice(0, -1), tabId),

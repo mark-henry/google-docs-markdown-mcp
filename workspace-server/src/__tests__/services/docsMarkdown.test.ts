@@ -145,6 +145,15 @@ describe('buildRequests', () => {
     expect(edit.inserted).toEqual({ startIndex: 5, endIndex: 9 });
   });
 
+  it('insertAfter fills an empty paragraph instead of leaving it above', () => {
+    const flat = flatten(body('One\n', '\n'));
+    const edit = insertAfter(markdownToDocs('# New'), flat.paragraphs[1]);
+    expect(edit.requests[0]).toEqual({
+      insertText: { location: { index: 5, tabId: undefined }, text: 'New' },
+    });
+    expect(edit.inserted).toEqual({ startIndex: 5, endIndex: 9 });
+  });
+
   it('applies bullets last and back to front', () => {
     const flat = flatten(body('One\n'));
     const edit = insertAfter(
