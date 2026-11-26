@@ -9,14 +9,24 @@ import { markdownToDocs } from '../../../services/docsMarkdown/markdownToDocs';
 import { flatten } from '../../../services/docsMarkdown/docIndex';
 import {
   insertAfter,
+  footnoteFillRequests,
   Edit,
 } from '../../../services/docsMarkdown/buildRequests';
-import { docsToMarkdown } from '../../../services/docsMarkdown/docsToMarkdown';
+import { tabToMarkdown } from '../../../services/docsMarkdown/docsToMarkdown';
 import { FakeDoc } from './fakeDocs';
 
 /** Reads a (fake or real) document back the way docs_readMarkdown does. */
 export function readMarkdown(doc: docs_v1.Schema$Document): string {
-  return docsToMarkdown(doc.body?.content, doc.lists ?? undefined);
+  return tabToMarkdown({
+    documentTab: {
+      body: doc.body,
+      lists: doc.lists,
+      footnotes: doc.footnotes,
+      headers: doc.headers,
+      footers: doc.footers,
+      documentStyle: doc.documentStyle,
+    },
+  });
 }
 
 /** Appends markdown after the last body paragraph, as docs_insertMarkdown does. */
@@ -27,7 +37,15 @@ export function insertMarkdownAtEnd(doc: FakeDoc, markdown: string): Edit {
     markdownToDocs(markdown),
     bodyParas[bodyParas.length - 1],
   );
-  doc.batchUpdate(edit.requests);
+  const replies = doc.batchUpdate(edit.requests);
+  // Footnote text needs the IDs the first batch returned (a second batch).
+  if (edit.footnotes?.length) {
+    const ids: string[] = [];
+    edit.requests.forEach((r, i) => {
+      if (r.createFootnote) ids.push(replies[i]?.createFootnote?.footnoteId ?? '');
+    });
+    doc.batchUpdate(footnoteFillRequests(edit.footnotes, ids));
+  }
   return edit;
 }
 

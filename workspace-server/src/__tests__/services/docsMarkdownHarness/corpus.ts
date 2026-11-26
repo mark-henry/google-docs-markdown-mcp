@@ -37,6 +37,20 @@ export const CORPUS: Fixture[] = [
   f('unicode-and-emoji', 'Café ☕ 日本語 😀 done\n'),
   f('emoji-styled', 'before **😀 bold** after\n'),
 
+  // ---- footnotes
+  f('footnote', 'A claim[^1] here.\n\n[^1]: The source.\n'),
+  f(
+    'footnotes-two-styled',
+    'First[^1] and second[^2].\n\n[^1]: A **bold** note.\n\n[^2]: Another note.\n',
+  ),
+  f('footnote-in-list', '- item[^1]\n- plain\n\n[^1]: Listed note.\n'),
+  f('footnote-in-heading', '## Title[^1]\n\nBody.\n\n[^1]: Heading note.\n'),
+
+  f(
+    'footnotes-out-of-creation-order',
+    'Alpha[^1] beta[^2]\n\n[^1]: one\n\n[^2]: two\n',
+  ),
+
   // ---- inline styles
   f('bold', 'a **bold** word\n'),
   f('italic', 'an *italic* word\n'),

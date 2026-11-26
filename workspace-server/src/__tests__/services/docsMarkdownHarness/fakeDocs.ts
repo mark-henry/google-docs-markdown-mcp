@@ -60,6 +60,8 @@ interface Ch {
   c: string;
   ts: TextStyle;
   para?: ParaProps;
+  /** APPROX: a footnote reference is one char (U+FFFC) carrying the footnote id. */
+  fn?: string;
 }
 interface Struct {
   k: 'sec' | 'tbl' | 'row' | 'cell' | 'end';
@@ -120,7 +122,26 @@ const HANDLERS: Record<string, Handler> = {
       r.location?.index ??
       (r.endOfSegmentLocation ? doc.length - 1 : undefined);
     if (index == null) throw new FakeDocsError('insertText: no location');
-    doc.insertText(index, r.text ?? '');
+    doc.target(r.location?.segmentId).insertText(index, r.text ?? '');
+  },
+  createFootnote: (doc, r: docs_v1.Schema$CreateFootnoteRequest) => {
+    doc.rejectTab(r.location?.tabId ?? r.endOfSegmentLocation?.tabId);
+    const index =
+      r.location?.index ??
+      (r.endOfSegmentLocation ? doc.length - 1 : undefined);
+    if (index == null) throw new FakeDocsError('createFootnote: no location');
+    if (r.location?.segmentId) {
+      throw new FakeDocsError('createFootnote: references only go in the body');
+    }
+    doc.createFootnote(index);
+  },
+  createHeader: (doc, r: docs_v1.Schema$CreateHeaderRequest) => {
+    doc.rejectTab(r.sectionBreakLocation?.tabId);
+    doc.createSegment('header', r.type, r.sectionBreakLocation?.index);
+  },
+  createFooter: (doc, r: docs_v1.Schema$CreateFooterRequest) => {
+    doc.rejectTab(r.sectionBreakLocation?.tabId);
+    doc.createSegment('footer', r.type, r.sectionBreakLocation?.index);
   },
   insertTable: (doc, r: docs_v1.Schema$InsertTableRequest) => {
     doc.rejectTab(r.location?.tabId ?? r.endOfSegmentLocation?.tabId);
@@ -132,11 +153,13 @@ const HANDLERS: Record<string, Handler> = {
   },
   deleteContentRange: (doc, r: docs_v1.Schema$DeleteContentRangeRequest) => {
     doc.rejectTab(r.range?.tabId);
-    doc.deleteRange(r.range?.startIndex ?? -1, r.range?.endIndex ?? -1);
+    doc
+      .target(r.range?.segmentId)
+      .deleteRange(r.range?.startIndex ?? -1, r.range?.endIndex ?? -1);
   },
   updateTextStyle: (doc, r: docs_v1.Schema$UpdateTextStyleRequest) => {
     doc.rejectTab(r.range?.tabId);
-    doc.updateTextStyle(
+    doc.target(r.range?.segmentId).updateTextStyle(
       r.range?.startIndex ?? -1,
       r.range?.endIndex ?? -1,
       r.textStyle ?? {},
@@ -176,7 +199,24 @@ const HANDLERS: Record<string, Handler> = {
 };
 
 export class FakeDoc {
-  private toks: Tok[] = [{ k: 'sec' }, newline()];
+  private toks: Tok[];
+  /** APPROX: footnote, header and footer segments, each a FakeDoc without the section break. */
+  private segments = new Map<string, FakeDoc>();
+  private footnoteIds: string[] = [];
+  private styleIds: Record<string, string> = {};
+  private nextSegment = 1;
+  /** First valid index: 1 in a body (after the section break), 0 in a segment. */
+  private min: number;
+  private isSegment: boolean;
+
+  constructor(segment = false, initial?: string) {
+    this.isSegment = segment;
+    this.min = segment ? 0 : 1;
+    this.toks = segment
+      ? [...(initial ?? '').split('').map((c): Ch => ({ k: 'ch', c, ts: {} })), newline()]
+      : [{ k: 'sec' }, newline()];
+  }
+
   private lists: Record<string, docs_v1.Schema$List> = {};
   private nextListId = 1;
 
@@ -186,7 +226,8 @@ export class FakeDoc {
   }
 
   /** Applies requests in order, like documents.batchUpdate. */
-  batchUpdate(requests: Request[]): void {
+  batchUpdate(requests: Request[]): docs_v1.Schema$Response[] {
+    const replies: docs_v1.Schema$Response[] = [];
     requests.forEach((req, i) => {
       const keys = Object.keys(req).filter(
         (k) => (req as Record<string, unknown>)[k] !== undefined,
@@ -203,8 +244,11 @@ export class FakeDoc {
         );
       }
       try {
+        const before = this.replyMarker;
         handler(this, (req as Record<string, unknown>)[keys[0]]);
         this.assertWellFormed();
+        for (const seg of this.segments.values()) seg.assertWellFormed();
+        replies.push(this.takeReply(before));
       } catch (e) {
         if (e instanceof FakeDocsError) {
           e.message = `request #${i} (${keys[0]}): ${e.message}`;
@@ -212,16 +256,83 @@ export class FakeDoc {
         throw e;
       }
     });
+    return replies;
+  }
+
+  private replyMarker = 0;
+  private pendingReply: docs_v1.Schema$Response = {};
+  private takeReply(_before: number): docs_v1.Schema$Response {
+    const r = this.pendingReply;
+    this.pendingReply = {};
+    return r;
+  }
+
+  /** The body, or the footnote/header/footer segment with this ID. */
+  target(segmentId: string | null | undefined): FakeDoc {
+    if (!segmentId) return this;
+    const seg = this.segments.get(segmentId);
+    if (!seg) throw new FakeDocsError(`unknown segmentId "${segmentId}"`);
+    return seg;
+  }
+
+  createFootnote(index: number) {
+    this.assertTextPosition(index, 'createFootnote');
+    const id = `kix.fn${this.nextSegment++}`;
+    // APPROX: per the API reference a new footnote begins with a space.
+    this.segments.set(id, new FakeDoc(true, ' '));
+    this.footnoteIds.push(id);
+    const here = this.toks[index] as Ch;
+    const before = this.toks[index - 1];
+    const ts =
+      before && before.k === 'ch' && before.c !== '\n' ? before.ts : here.ts;
+    this.toks.splice(index, 0, { k: 'ch', c: '\uFFFC', ts: clone(ts), fn: id });
+    this.pendingReply = { createFootnote: { footnoteId: id } };
+  }
+
+  createSegment(
+    kind: 'header' | 'footer',
+    type: string | null | undefined,
+    sectionIndex: number | null | undefined,
+  ) {
+    if (type !== 'DEFAULT') throw new FakeDocsError(`create ${kind}: type must be DEFAULT`);
+    if (sectionIndex != null && sectionIndex !== 0) {
+      throw new FakeDocsError(`create ${kind}: FakeDoc has one section`);
+    }
+    const key = `default${kind === 'header' ? 'Header' : 'Footer'}Id`;
+    if (this.styleIds[key]) throw new FakeDocsError(`${kind} already exists`);
+    const id = `kix.${kind}${this.nextSegment++}`;
+    this.segments.set(id, new FakeDoc(true));
+    this.styleIds[key] = id;
+    this.pendingReply =
+      kind === 'header'
+        ? { createHeader: { headerId: id } }
+        : { createFooter: { footerId: id } };
   }
 
   /** The document as the Docs API would return it (body + lists). */
   toDocument(): docs_v1.Schema$Document {
     const content = this.parseContainer(0, new Set()).content;
+    const part = (prefix: string) => {
+      const out: Record<string, any> = {};
+      for (const [id, seg] of this.segments) {
+        if (id.startsWith(prefix)) out[id] = seg.segmentOf(id, prefix);
+      }
+      return out;
+    };
     return {
       documentId: 'fake-doc',
       body: { content },
       lists: clone(this.lists),
+      footnotes: part('kix.fn'),
+      headers: part('kix.header'),
+      footers: part('kix.footer'),
+      documentStyle: clone(this.styleIds),
     };
+  }
+
+  private segmentOf(id: string, prefix: string) {
+    const idKey = prefix === 'kix.fn' ? 'footnoteId' : prefix === 'kix.header' ? 'headerId' : 'footerId';
+    return { [idKey]: id, content: this.parseContainer(0, new Set()).content };
   }
 
   /** Visible text of the body, structure tokens shown as markers. For debugging. */
@@ -277,7 +388,7 @@ export class FakeDoc {
   }
 
   deleteRange(start: number, end: number) {
-    if (!(start >= 1 && end > start && end <= this.toks.length - 1)) {
+    if (!(start >= this.min && end > start && end <= this.toks.length - 1)) {
       throw new FakeDocsError(
         `deleteContentRange: bad range [${start}, ${end}) for body of length ${this.toks.length} (the final newline cannot be deleted)`,
       );
@@ -391,7 +502,7 @@ export class FakeDoc {
   // ---- helpers -------------------------------------------------------------
 
   private assertRange(start: number, end: number, what: string) {
-    if (!(start >= 1 && end > start && end <= this.toks.length)) {
+    if (!(start >= this.min && end > start && end <= this.toks.length)) {
       throw new FakeDocsError(
         `${what}: bad range [${start}, ${end}) for body of length ${this.toks.length}`,
       );
@@ -456,7 +567,7 @@ export class FakeDoc {
     const fail = (m: string) => {
       throw new FakeDocsError(`malformed document (${m}): ${this.dump()}`);
     };
-    if (t[0]?.k !== 'sec') fail('first token is not the section break');
+    if (!this.isSegment && t[0]?.k !== 'sec') fail('first token is not the section break');
     if (!isNewline(t[t.length - 1])) fail('body must end with a paragraph');
     let depth = 0;
     t.forEach((tok, i) => {
@@ -527,6 +638,19 @@ export class FakeDoc {
     for (;; i++) {
       const tok = this.toks[i] as Ch;
       if (!tok || tok.k !== 'ch') throw new FakeDocsError('unterminated paragraph');
+      if (tok.fn) {
+        flush();
+        elements.push({
+          startIndex: i,
+          endIndex: i + 1,
+          footnoteReference: {
+            footnoteId: tok.fn,
+            footnoteNumber: String(this.toks.filter((t) => t.k === 'ch' && t.fn).findIndex((t) => (t as Ch).fn === tok.fn) + 1),
+          },
+        });
+        runStart = i + 1;
+        continue;
+      }
       if (text && JSON.stringify(tok.ts) !== JSON.stringify(style)) flush();
       if (!text) {
         runStart = i;

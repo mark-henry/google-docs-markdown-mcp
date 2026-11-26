@@ -110,3 +110,35 @@ describe('FakeDoc (the harness fake itself)', () => {
     ).toThrow(/followed by tbl/);
   });
 });
+
+describe('FakeDoc headers and footnotes', () => {
+  it('creates a header, sets it, and replaces it, read back as a labeled block', () => {
+    const { segmentTextRequests } = require('../../services/docsMarkdown/buildRequests');
+    const { markdownToDocs } = require('../../services/docsMarkdown/markdownToDocs');
+    const { readMarkdown } = require('./docsMarkdownHarness/roundTrip');
+    const doc = new FakeDoc();
+    doc.batchUpdate([ins(1, 'Body')]);
+    const [r] = doc.batchUpdate([
+      { createHeader: { type: 'DEFAULT', sectionBreakLocation: { index: 0 } } },
+    ]);
+    const id = r.createHeader!.headerId!;
+    doc.batchUpdate(segmentTextRequests(markdownToDocs('Top **x**'), id, 1));
+    expect(readMarkdown(doc.toDocument())).toContain(
+      `Body\n\n<!-- header (${id}; edit with docs.setHeader) -->\nTop **x**\n<!-- end header -->`,
+    );
+    // Replace: existing end is the segment's current length.
+    const content = doc.toDocument().headers![id].content!;
+    const end = content[content.length - 1].endIndex!;
+    doc.batchUpdate(segmentTextRequests(markdownToDocs('New'), id, end));
+    expect(readMarkdown(doc.toDocument())).toContain('\nNew\n<!-- end header -->');
+  });
+
+  it('rejects footnote references outside the body', () => {
+    const doc = new FakeDoc();
+    expect(() =>
+      doc.batchUpdate([
+        { createFootnote: { location: { index: 1, segmentId: 'x' } } },
+      ]),
+    ).toThrow(FakeDocsError);
+  });
+});

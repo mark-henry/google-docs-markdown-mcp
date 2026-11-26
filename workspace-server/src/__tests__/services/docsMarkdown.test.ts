@@ -78,10 +78,14 @@ describe('markdownToDocs', () => {
     expect(markdownToDocs('a \\*b\\* & <c>').text).toBe('a *b* & <c>\n');
   });
 
-  it('rejects tables loudly', () => {
-    expect(() => markdownToDocs('| a |\n|---|\n| 1 |')).toThrow(
-      UnsupportedMarkdownError,
-    );
+  it('parses tables into header and body rows', () => {
+    const md = markdownToDocs('| a | b |\n|---|---|\n| 1 | 2 |');
+    expect(md.tables).toHaveLength(1);
+    expect(md.tables[0].columns).toBe(2);
+    expect(md.tables[0].rows.map((r) => r.map((c) => c.text))).toEqual([
+      ['a', 'b'],
+      ['1', '2'],
+    ]);
   });
 
   it('detects inline (single plain paragraph) markdown', () => {
