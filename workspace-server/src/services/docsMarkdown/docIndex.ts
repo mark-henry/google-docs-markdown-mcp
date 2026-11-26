@@ -98,6 +98,10 @@ export function findUnique(
   // text contains both the suggested insertion and deletion, unmarked.
   const unmarked = needle.replace(/\{\+\+|\+\+\}|\{--|--\}/g, '');
   const candidates = unmarked === needle ? [needle] : [needle, unmarked];
+  // readMarkdown shows a footnote reference as [^n]; in the document it is
+  // one placeholder character.
+  const withRefs = unmarked.replace(/\[\^[^\]\s]+\]/g, OBJECT_CHAR);
+  if (withRefs !== unmarked) candidates.push(withRefs);
   try {
     const plain = markdownToPlain(unmarked);
     if (plain && plain !== needle) candidates.push(plain);

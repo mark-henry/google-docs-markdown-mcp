@@ -466,7 +466,7 @@ async function main() {
     'docs.readMarkdown',
     {
       description:
-        'Reads a Google Doc tab as markdown (headings, lists, bold/italic/strikethrough/code, links, tables). Quote text from this output as anchors for docs.insertMarkdown, docs.replaceMarkdown and docs.comment.',
+        'Reads a Google Doc tab as markdown (headings, lists, bold/italic/strikethrough/code, links, tables, footnotes as [^n] with definitions after the body, person/date/rich-link chips as text, page breaks and the table of contents as <!-- --> markers, headers and footers as labeled blocks at the end). Quote text from this output as anchors for docs.insertMarkdown, docs.replaceMarkdown and docs.comment. Write a footnote by putting [^label] in the text and a line "[^label]: note text" in the markdown.',
       inputSchema: { documentId: mdDocId, tabId: mdTabId },
     },
     docsMarkdownService.readMarkdown,
@@ -587,6 +587,94 @@ async function main() {
       },
     },
     docsMarkdownService.changesSince,
+  );
+
+  registerTool(
+    'docs.listTabs',
+    {
+      description:
+        'Lists the tabs of a Google Doc (nested tabs indented) with their tab IDs, for the tabId parameter of the other docs tools.',
+      inputSchema: { documentId: mdDocId },
+    },
+    docsMarkdownService.listTabs,
+  );
+
+  registerTool(
+    'docs.createTab',
+    {
+      description:
+        'Adds a tab to a Google Doc. Optionally nest it under parentTabId, place it at a position among its siblings, and give it an emoji icon. Returns the new tab ID.',
+      inputSchema: {
+        documentId: mdDocId,
+        title: z.string().describe('Tab title.'),
+        parentTabId: z
+          .string()
+          .optional()
+          .describe('Nest the new tab under this tab.'),
+        index: z
+          .number()
+          .int()
+          .optional()
+          .describe('Zero-based position among its siblings. Default: last.'),
+        iconEmoji: z.string().optional().describe('An emoji for the tab icon.'),
+      },
+    },
+    docsMarkdownService.createTab,
+  );
+
+  registerTool(
+    'docs.renameTab',
+    {
+      description: 'Renames a tab of a Google Doc.',
+      inputSchema: {
+        documentId: mdDocId,
+        tabId: z.string().describe('Tab ID from docs.listTabs.'),
+        title: z.string().describe('New title.'),
+      },
+    },
+    docsMarkdownService.renameTab,
+  );
+
+  registerTool(
+    'docs.setHeader',
+    {
+      description:
+        "Sets the default header of a Google Doc tab to the given inline markdown (bold, italic, links; paragraphs allowed), creating the header if there is none. Replaces the header's existing text. First-page and even-page headers are read-only here.",
+      inputSchema: {
+        documentId: mdDocId,
+        markdown: z.string().describe('Header text as markdown.'),
+        tabId: mdTabId,
+      },
+    },
+    docsMarkdownService.setHeader,
+  );
+
+  registerTool(
+    'docs.setFooter',
+    {
+      description:
+        "Sets the default footer of a Google Doc tab to the given inline markdown, creating the footer if there is none. Replaces the footer's existing text. Page numbers can't be inserted by the Docs API.",
+      inputSchema: {
+        documentId: mdDocId,
+        markdown: z.string().describe('Footer text as markdown.'),
+        tabId: mdTabId,
+      },
+    },
+    docsMarkdownService.setFooter,
+  );
+
+  registerTool(
+    'docs.resolveSuggestion',
+    {
+      description:
+        'Accepts or rejects a pending suggestion by ID (from docs.listComments). The API cannot create suggestions directly; use mode "suggest" on the insert/replace tools for that.',
+      inputSchema: {
+        documentId: mdDocId,
+        suggestionId: z.string().describe('Suggestion ID from docs.listComments.'),
+        action: z.enum(['accept', 'reject']),
+      },
+    },
+    docsMarkdownService.resolveSuggestion,
   );
 
   // Slides tools

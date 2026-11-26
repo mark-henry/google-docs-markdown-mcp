@@ -105,6 +105,11 @@ claude mcp add --scope user gdocs-personal \
 | `docs.listComments`    | Lists comment threads (ID, open/resolved, quoted text, each post's author and time) and pending suggestions.                                                                         |
 | `docs.replyToComment`  | Replies to a thread by ID, and/or resolves or reopens it.                                                                                                                            |
 | `docs.changesSince`    | Shows what others changed since your last `readMarkdown`: a markdown diff plus new comments and suggestions, with your own edits through this server left out.                       |
+| `docs.resolveSuggestion` | Accepts or rejects a pending suggestion by ID. (The API can't create suggestions directly; `mode: "suggest"` on the write tools makes them.) |
+| `docs.listTabs`        | Lists tabs (nested ones indented) with tab IDs.                                                                                                                                      |
+| `docs.createTab`       | Adds a tab, optionally nested, positioned, with an emoji icon.                                                                                                                       |
+| `docs.renameTab`       | Renames a tab.                                                                                                                                                                       |
+| `docs.setHeader`, `docs.setFooter` | Sets the tab's default header or footer from inline markdown, creating it if missing.                                                                                    |
 
 All write tools take `tabId` (default: first tab) and `mode: "edit" | "suggest"`.
 
@@ -122,8 +127,12 @@ All write tools take `tabId` (default: first tab) and `mode: "edit" | "suggest"`
 | `> quote`                                    | Indented paragraph                                                          |
 | Pending suggestions (read only)              | `{++inserted++}` `{--deleted--}` ([CriticMarkup](https://criticmarkup.com)) |
 | Tables                                       | Read only for now; writing one returns a clear error                        |
+| `text[^1]` plus a line `[^1]: note`          | Native footnote (read and write; one batch creates it, a second fills in its text) |
+| Chips, page numbers, breaks, dropdowns (read only) | Person and rich-link chips as links, date chips as their text, `{page number}`, `<!-- page break -->`, `<!-- horizontal rule -->`, `{equation}`, `{dropdown}`; nothing is silently dropped |
+| Table of contents (read only)                | `<!-- table of contents (read-only …) -->` marker. The API can't create or edit one; markers are ignored on write |
+| Headers and footers                          | Read as labeled `<!-- header (id; …) -->` blocks after the body; write the default one with `docs.setHeader` / `docs.setFooter` |
 
-Known limits: nested items under a numbered list use Google's numbered preset, so they show as a., b., c.; list items with more than one paragraph aren't supported; images aren't written.
+Known limits: nested items under a numbered list use Google's numbered preset, so they show as a., b., c.; list items with more than one paragraph aren't supported; images aren't written. Structure limits: footnotes can't be written inside table cells, and not in the same call as a table; footnote definitions must be one inline paragraph; a footnote reference written without its `[^n]: …` definition (or the reverse) is an error rather than literal text; footnote text goes in at index 1 of the new footnote segment (the API says new footnotes begin with a space), unverified against the live API; chips (people, dates, rich links, dropdowns) can be read but not written by these tools, and quoting a chip's text as an anchor won't match (a chip is one placeholder character); only the default header/footer is writable (first-page and even-page ones are read-only, and page numbers can't be inserted); `setHeader` creates headers with `sectionBreakLocation` at the tab's first section, also unverified live; the table of contents is read-only in the API itself; edits that span a table of contents delete it with the paragraphs around it.
 
 ### How anchoring works
 

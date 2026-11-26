@@ -5,7 +5,7 @@
  */
 
 import { docs_v1 } from 'googleapis';
-import { MdDoc } from './markdownToDocs';
+import { MdDoc, MdRun } from './markdownToDocs';
 import { DocParagraph, FlatDoc } from './docIndex';
 
 type Request = docs_v1.Schema$Request;
@@ -35,6 +35,12 @@ export interface Edit {
   requests: Request[];
   /** Doc range the new content occupies after the edit. */
   inserted: { startIndex: number; endIndex: number };
+  /**
+   * Content for the footnotes `requests` create, in the order their
+   * createFootnote requests appear. The footnote IDs only exist after the
+   * batch runs, so the caller fills them in with footnoteFillRequests.
+   */
+  footnotes?: { text: string; runs: MdRun[] }[];
 }
 
 /** Insert block markdown as new paragraphs before paragraph `p`. */
@@ -133,9 +139,15 @@ export function replaceInline(
     requests.push(resetTextStyle(start, start + text.length, tabId));
     requests.push(...runStyles(md, start, tabId, text.length));
   }
+  const notes = footnoteRequests(md, start, tabId);
+  requests.push(...notes.requests);
   return {
     requests,
-    inserted: { startIndex: start, endIndex: start + text.length },
+    inserted: {
+      startIndex: start,
+      endIndex: start + text.length + md.footnotes.length,
+    },
+    ...(notes.fills.length ? { footnotes: notes.fills } : {}),
   };
 }
 
@@ -211,13 +223,86 @@ function finishBlock(
   requests.push(...bulletRequests(md, base, tabId));
   const tables = tableRequests(md, base, tabId, around);
   requests.push(...tables.requests);
+  const notes = footnoteRequests(md, base, tabId);
+  requests.push(...notes.requests);
   const tabs = md.paragraphs
     .filter((p) => p.bullet)
     .reduce((n, p) => n + p.bullet!.level, 0);
   return {
     requests,
-    inserted: { startIndex: base, endIndex: end - tabs + tables.growth },
+    inserted: {
+      startIndex: base,
+      endIndex: end - tabs + tables.growth + md.footnotes.length,
+    },
+    ...(notes.fills.length ? { footnotes: notes.fills } : {}),
   };
+}
+
+/**
+ * Footnote references go in last, back to front so earlier offsets hold. The
+ * reference has no text in md.text; bullet creation has by now removed the
+ * nesting tabs, which shifts every offset after a nested item.
+ */
+function footnoteRequests(
+  md: MdDoc,
+  base: number,
+  tabId?: string,
+): { requests: Request[]; fills: { text: string; runs: MdRun[] }[] } {
+  const requests: Request[] = [];
+  const fills: { text: string; runs: MdRun[] }[] = [];
+  const ordered = [...md.footnotes].sort((a, b) => b.offset - a.offset);
+  for (const f of ordered) {
+    const tabsBefore = md.paragraphs
+      .filter((q) => q.bullet && q.start <= f.offset)
+      .reduce((n, q) => n + q.bullet!.level, 0);
+    requests.push({
+      createFootnote: {
+        location: { index: base + f.offset - tabsBefore, tabId },
+      },
+    });
+    fills.push({ text: f.text, runs: f.runs });
+  }
+  return { requests, fills };
+}
+
+/**
+ * Requests that write each footnote's text, given the IDs the createFootnote
+ * requests returned (same order as Edit.footnotes). A new footnote's segment
+ * starts with a space, so text goes in at index 1.
+ */
+export function footnoteFillRequests(
+  fills: { text: string; runs: MdRun[] }[],
+  footnoteIds: string[],
+  tabId?: string,
+): Request[] {
+  const out: Request[] = [];
+  fills.forEach((f, i) => {
+    if (!f.text) return;
+    const seg = footnoteIds[i];
+    const mine: Request[] = [
+      insertText(1, f.text, tabId),
+      ...runStyles(
+        { text: f.text, paragraphs: [], runs: f.runs, tables: [], footnotes: [] },
+        1,
+        tabId,
+      ),
+    ];
+    out.push(...mine.map((r) => inSegment(r, seg)));
+  });
+  return out;
+}
+
+/** Points a request's location or range at a header, footer or footnote. */
+export function inSegment(r: Request, segmentId: string): Request {
+  const copy = JSON.parse(JSON.stringify(r)) as Request;
+  if (copy.insertText?.location) copy.insertText.location.segmentId = segmentId;
+  if (copy.updateTextStyle?.range) {
+    copy.updateTextStyle.range.segmentId = segmentId;
+  }
+  if (copy.deleteContentRange?.range) {
+    copy.deleteContentRange.range.segmentId = segmentId;
+  }
+  return copy;
 }
 
 /**
@@ -265,7 +350,7 @@ function tableRequests(
         requests.push(resetTextStyle(at, at + cell.text.length, tabId));
         requests.push(
           ...runStyles(
-            { text: cell.text, paragraphs: [], runs: cell.runs, tables: [] },
+            { text: cell.text, paragraphs: [], runs: cell.runs, tables: [], footnotes: [] },
             at,
             tabId,
           ),
@@ -376,4 +461,25 @@ function textStyle(
       fields: Object.keys(style).join(','),
     },
   };
+}
+
+/**
+ * Replaces the text of a header or footer segment with inline markdown.
+ * `existingEnd` is the segment's end index (its final newline stays).
+ */
+export function segmentTextRequests(
+  md: MdDoc,
+  segmentId: string,
+  existingEnd: number,
+  tabId?: string,
+): Request[] {
+  const text = md.text.replace(/\n$/, '');
+  const out: Request[] = [];
+  if (existingEnd - 1 > 0) out.push(deleteRange(0, existingEnd - 1, tabId));
+  if (text) {
+    out.push(insertText(0, text, tabId));
+    out.push(resetTextStyle(0, text.length, tabId));
+    out.push(...runStyles(md, 0, tabId, text.length));
+  }
+  return out.map((r) => inSegment(r, segmentId));
 }

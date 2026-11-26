@@ -21,9 +21,11 @@ import {
   insertBefore,
   replaceInline,
   replaceParagraphs,
+  footnoteFillRequests,
+  segmentTextRequests,
   Edit,
 } from './docsMarkdown/buildRequests';
-import { docsToMarkdown } from './docsMarkdown/docsToMarkdown';
+import { tabToMarkdown } from './docsMarkdown/docsToMarkdown';
 import {
   discussionOf,
   renderDiscussion,
@@ -44,6 +46,7 @@ interface Loaded {
   revisionId: string;
   flat: FlatDoc;
   tab: docs_v1.Schema$Tab;
+  tabCount: number;
   title: string;
   discussion: Discussion;
   /** When this state was fetched. */
@@ -97,6 +100,7 @@ export class DocsMarkdownService {
       revisionId: res.data.revisionId ?? '',
       flat: flatten(tab.documentTab?.body?.content),
       tab,
+      tabCount: tabs.length,
       title: res.data.title ?? '',
       discussion: discussionOf(res.data),
       time,
@@ -108,10 +112,7 @@ export class DocsMarkdownService {
       revisionId: doc.revisionId,
       time: doc.time,
       own,
-      markdown: docsToMarkdown(
-        doc.tab.documentTab?.body?.content,
-        doc.tab.documentTab?.lists ?? undefined,
-      ),
+      markdown: tabToMarkdown(doc.tab),
     };
   }
 
@@ -147,11 +148,32 @@ export class DocsMarkdownService {
         } as docs_v1.Schema$WriteControl,
       },
     });
-    await this.recordWrite(
-      docs,
-      doc,
-      res.data.writeControl?.requiredRevisionId ?? undefined,
-    );
+    let revision = res.data.writeControl?.requiredRevisionId ?? undefined;
+    // Footnote text can only be written once the batch has created the
+    // footnotes and returned their IDs, so it takes a second batch.
+    if (edit.footnotes?.length) {
+      const ids: string[] = [];
+      edit.requests.forEach((r, i) => {
+        if (r.createFootnote) {
+          ids.push(res.data.replies?.[i]?.createFootnote?.footnoteId ?? '');
+        }
+      });
+      const fill = footnoteFillRequests(edit.footnotes, ids, doc.tabId);
+      if (fill.length) {
+        const res2 = await docs.documents.batchUpdate({
+          documentId: doc.id,
+          requestBody: {
+            requests: fill,
+            writeControl: {
+              ...(revision ? { requiredRevisionId: revision } : {}),
+              ...(mode === 'suggest' ? { writeMode: 'SUGGEST' } : {}),
+            } as docs_v1.Schema$WriteControl,
+          },
+        });
+        revision = res2.data.writeControl?.requiredRevisionId ?? revision;
+      }
+    }
+    await this.recordWrite(docs, doc, revision);
   }
 
   public readMarkdown = ({
@@ -281,6 +303,173 @@ export class DocsMarkdownService {
       );
       return out.join('\n');
     });
+
+  public listTabs = ({ documentId }: { documentId: string }) =>
+    run('listTabs', async () => {
+      const docs = await this.client();
+      const id = extractDocId(documentId) || documentId;
+      const res = await docs.documents.get({
+        documentId: id,
+        includeTabsContent: true,
+      });
+      const lines = flattenTabs(res.data.tabs ?? []).map((t) => {
+        const p = t.tabProperties ?? {};
+        const emoji = p.iconEmoji ? `${p.iconEmoji} ` : '';
+        return `${'  '.repeat(p.nestingLevel ?? 0)}- ${emoji}${p.title ?? '(untitled)'} (tabId: ${p.tabId}, index ${p.index ?? 0})`;
+      });
+      return `# Tabs in "${res.data.title ?? ''}"\n\n${lines.join('\n')}`;
+    });
+
+  public createTab = ({
+    documentId,
+    title,
+    parentTabId,
+    index,
+    iconEmoji,
+  }: {
+    documentId: string;
+    title: string;
+    parentTabId?: string;
+    index?: number;
+    iconEmoji?: string;
+  }) =>
+    run('createTab', async () => {
+      const docs = await this.client();
+      const id = extractDocId(documentId) || documentId;
+      const res = await docs.documents.batchUpdate({
+        documentId: id,
+        requestBody: {
+          requests: [
+            {
+              addDocumentTab: {
+                tabProperties: { title, parentTabId, index, iconEmoji },
+              },
+            },
+          ],
+        },
+      });
+      const tab = res.data.replies?.[0]?.addDocumentTab?.tabProperties;
+      return `Created tab ${JSON.stringify(title)} (tabId: ${tab?.tabId ?? '?'}).`;
+    });
+
+  public renameTab = ({
+    documentId,
+    tabId,
+    title,
+  }: {
+    documentId: string;
+    tabId: string;
+    title: string;
+  }) =>
+    run('renameTab', async () => {
+      const docs = await this.client();
+      const id = extractDocId(documentId) || documentId;
+      await docs.documents.batchUpdate({
+        documentId: id,
+        requestBody: {
+          requests: [
+            {
+              updateDocumentTabProperties: {
+                tabProperties: { tabId, title },
+                fields: 'title',
+              },
+            },
+          ],
+        },
+      });
+      return `Renamed tab ${tabId} to ${JSON.stringify(title)}.`;
+    });
+
+  public resolveSuggestion = ({
+    documentId,
+    suggestionId,
+    action,
+  }: {
+    documentId: string;
+    suggestionId: string;
+    action: 'accept' | 'reject';
+  }) =>
+    run('resolveSuggestion', async () => {
+      const docs = await this.client();
+      const id = extractDocId(documentId) || documentId;
+      await docs.documents.batchUpdate({
+        documentId: id,
+        requestBody: {
+          requests: [
+            (action === 'accept'
+              ? { acceptSuggestion: { suggestionId } }
+              : { rejectSuggestion: { suggestionId } }) as unknown as docs_v1.Schema$Request,
+          ],
+        },
+      });
+      return `${action === 'accept' ? 'Accepted' : 'Rejected'} suggestion ${suggestionId}.`;
+    });
+
+  private setSegment(kind: 'header' | 'footer') {
+    return ({
+      documentId,
+      markdown,
+      tabId,
+    }: {
+      documentId: string;
+      markdown: string;
+      tabId?: string;
+    }) =>
+      run(kind === 'header' ? 'setHeader' : 'setFooter', async () => {
+        const md = markdownToDocs(markdown);
+        const docs = await this.client();
+        const doc = await this.load(docs, documentId, tabId);
+        const dt = doc.tab.documentTab;
+        const style = dt?.documentStyle;
+        const segments =
+          (kind === 'header' ? dt?.headers : dt?.footers) ?? {};
+        let segId =
+          (kind === 'header'
+            ? style?.defaultHeaderId
+            : style?.defaultFooterId) ?? '';
+        if (!segId || !segments[segId]) {
+          const created = await docs.documents.batchUpdate({
+            documentId: doc.id,
+            requestBody: {
+              requests: [
+                kind === 'header'
+                  ? {
+                      createHeader: {
+                        type: 'DEFAULT',
+                        sectionBreakLocation: { index: 0, tabId: doc.tabId },
+                      },
+                    }
+                  : {
+                      createFooter: {
+                        type: 'DEFAULT',
+                        sectionBreakLocation: { index: 0, tabId: doc.tabId },
+                      },
+                    },
+              ],
+            },
+          });
+          const r = created.data.replies?.[0];
+          segId =
+            (kind === 'header'
+              ? r?.createHeader?.headerId
+              : r?.createFooter?.footerId) ?? '';
+          if (!segId) throw new Error(`Docs did not return a ${kind} ID.`);
+        }
+        const content = segments[segId]?.content ?? [];
+        const end = content[content.length - 1]?.endIndex ?? 1;
+        const requests = segmentTextRequests(md, segId, end, doc.tabId);
+        if (requests.length) {
+          await docs.documents.batchUpdate({
+            documentId: doc.id,
+            requestBody: { requests },
+          });
+        }
+        return `Set the ${kind} of "${doc.title}" (tab ${doc.tabId}).`;
+      });
+  }
+
+  public setHeader = this.setSegment('header');
+  public setFooter = this.setSegment('footer');
 
   public insertMarkdown = ({
     documentId,
@@ -419,7 +608,9 @@ function header(doc: Loaded): string {
     open.length || pending.length
       ? ` | ${open.length} open comment${open.length === 1 ? '' : 's'}, ${pending.length} pending suggestion${pending.length === 1 ? '' : 's'} (docs.listComments)`
       : '';
-  return `${doc.title} | tab ${doc.tabId} | revision ${doc.revisionId}${talk}`;
+  const tabs =
+    doc.tabCount > 1 ? ` | ${doc.tabCount} tabs (docs.listTabs)` : '';
+  return `${doc.title} | tab ${doc.tabId}${tabs} | revision ${doc.revisionId}${talk}`;
 }
 
 function flattenTabs(tabs: docs_v1.Schema$Tab[]): docs_v1.Schema$Tab[] {

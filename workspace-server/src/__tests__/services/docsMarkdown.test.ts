@@ -19,8 +19,10 @@ import {
 import {
   insertAfter,
   replaceParagraphs,
+  footnoteFillRequests,
+  segmentTextRequests,
 } from '../../services/docsMarkdown/buildRequests';
-import { docsToMarkdown } from '../../services/docsMarkdown/docsToMarkdown';
+import { docsToMarkdown, tabToMarkdown } from '../../services/docsMarkdown/docsToMarkdown';
 
 /** A body: sectionBreak, then paragraphs given as strings (each ends '\n'). */
 function body(...paras: string[]) {
@@ -261,5 +263,111 @@ describe('docsToMarkdown', () => {
         L: { listProperties: { nestingLevels: [{}] } },
       }),
     ).toBe('## Head\n\na **bold** word\n\n- item\n');
+  });
+});
+
+describe('document structure', () => {
+  const para = (start: number, elements: any[]) => ({
+    startIndex: start,
+    endIndex: elements[elements.length - 1].endIndex,
+    paragraph: { elements },
+  });
+  const run = (start: number, content: string) => ({
+    startIndex: start,
+    endIndex: start + content.length,
+    textRun: { content },
+  });
+
+  it('reads footnotes as [^n] refs with definitions, keeping indices', () => {
+    const content: any[] = [
+      { startIndex: 0, endIndex: 1, sectionBreak: {} },
+      para(1, [
+        run(1, 'Claim'),
+        { startIndex: 6, endIndex: 7, footnoteReference: { footnoteId: 'f1', footnoteNumber: '1' } },
+        run(7, ' here\n'),
+      ]),
+    ];
+    const md = docsToMarkdown(content, undefined, {
+      footnotes: {
+        f1: { footnoteId: 'f1', content: [para(0, [run(0, ' The source.\n')])] },
+      },
+    });
+    expect(md).toBe('Claim[^1] here\n\n[^1]: The source.\n');
+    const flat = flatten(content);
+    expect(flat.text).toBe('Claim￼ here\n');
+    // [^1] quoted from readMarkdown anchors on the placeholder char.
+    expect(findUnique(flat, 'Claim[^1] here')).toEqual({ start: 1, end: 12 });
+  });
+
+  it('renders chips, breaks and the TOC instead of dropping them', () => {
+    const content: any[] = [
+      { startIndex: 0, endIndex: 1, sectionBreak: {} },
+      { startIndex: 1, endIndex: 5, tableOfContents: { content: [] } },
+      para(5, [
+        { startIndex: 5, endIndex: 6, autoText: { type: 'PAGE_NUMBER' } },
+        { startIndex: 6, endIndex: 7, pageBreak: {} },
+        { startIndex: 7, endIndex: 8, dropdown: {} },
+        run(8, '\n'),
+      ]),
+    ];
+    const md = docsToMarkdown(content, undefined);
+    expect(md).toContain('<!-- table of contents');
+    expect(md).toContain('{page number}<!-- page break -->{dropdown}');
+  });
+
+  it('parses footnote refs and definitions for writing', () => {
+    const md = markdownToDocs('Claim[^a] here\n\n[^a]: See **this**.');
+    expect(md.text).toBe('Claim here\n');
+    expect(md.footnotes).toEqual([
+      { offset: 5, text: 'See this.', runs: [{ start: 4, end: 8, bold: true }] },
+    ]);
+    expect(() => markdownToDocs('Claim[^a]')).toThrow(UnsupportedMarkdownError);
+    expect(() => markdownToDocs('x\n\n[^a]: unused')).toThrow(
+      UnsupportedMarkdownError,
+    );
+    expect(markdownToDocs('<!-- table of contents (x) -->\n\nHi').text).toBe(
+      'Hi\n',
+    );
+  });
+
+  it('creates footnotes back to front after bullets, then fills them', () => {
+    const md = markdownToDocs('- a[^1]\n  - b[^2]\n\n[^1]: one\n[^2]: two');
+    const edit = insertAfter(md, { start: 0, end: 1, container: 'body' }, undefined);
+    const creates = edit.requests.filter((r) => r.createFootnote);
+    // text "a\n\tb\n": ref 2 at offset 4, one nesting tab removed before it.
+    expect(creates.map((r) => r.createFootnote!.location!.index)).toEqual([
+      3, 1,
+    ]);
+    expect(edit.footnotes!.map((f) => f.text)).toEqual(['two', 'one']);
+    const fill = footnoteFillRequests(edit.footnotes!, ['fnB', 'fnA'], 't.0');
+    expect(fill[0].insertText).toEqual({
+      location: { index: 1, tabId: 't.0', segmentId: 'fnB' },
+      text: 'two',
+    });
+  });
+
+  it('writes a header segment, keeping its final newline', () => {
+    const reqs = segmentTextRequests(markdownToDocs('Hi **x**'), 'h1', 6, 't.0');
+    expect(reqs[0].deleteContentRange!.range).toEqual({
+      startIndex: 0,
+      endIndex: 5,
+      tabId: 't.0',
+      segmentId: 'h1',
+    });
+    expect(reqs[1].insertText!.location!.segmentId).toBe('h1');
+  });
+
+  it('labels headers and footers', () => {
+    const tab: any = {
+      documentTab: {
+        body: { content: [para(1, [run(1, 'Body\n')])] },
+        documentStyle: { defaultHeaderId: 'h1' },
+        headers: { h1: { headerId: 'h1', content: [para(0, [run(0, 'Top\n')])] } },
+        footers: { f1: { footerId: 'f1', content: [para(0, [run(0, '\n')])] } },
+      },
+    };
+    const md = tabToMarkdown(tab);
+    expect(md).toContain('Body\n\n<!-- header (h1; edit with docs.setHeader) -->\nTop\n<!-- end header -->');
+    expect(md).not.toContain('footer');
   });
 });

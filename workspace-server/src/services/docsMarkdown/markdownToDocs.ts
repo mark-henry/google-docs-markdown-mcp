@@ -51,12 +51,22 @@ export interface MdTable {
   columns: number;
 }
 
+/** A footnote reference to create at `offset` in the body text. */
+export interface MdFootnote {
+  /** Offset in MdDoc.text where the reference goes (it has no text of its own). */
+  offset: number;
+  /** The footnote's own inline content. */
+  text: string;
+  runs: MdRun[];
+}
+
 export interface MdDoc {
   /** Every paragraph ends with '\n', so `text` does too (unless empty). */
   text: string;
   paragraphs: MdParagraph[];
   runs: MdRun[];
   tables: MdTable[];
+  footnotes: MdFootnote[];
 }
 
 type InlineStyle = Omit<MdRun, 'start' | 'end'>;
@@ -70,10 +80,46 @@ const HEADINGS = [
   'HEADING_6',
 ];
 
+const READ_ONLY_MARKER =
+  /^<!--\s*(table of contents|page break|column break|horizontal rule|end (header|footer))\b[^>]*-->$/i;
+
 export class UnsupportedMarkdownError extends Error {}
 
+const FOOTNOTE_REF = /\[\^([^\]\s]+)\]/g;
+
+/** Splits `[^label]: text` definitions (indented lines continue) from the rest. */
+function extractFootnoteDefs(markdown: string): {
+  rest: string;
+  defs: Map<string, string>;
+} {
+  const defs = new Map<string, string>();
+  const rest: string[] = [];
+  const lines = markdown.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^\[\^([^\]\s]+)\]:[ \t]*(.*)$/.exec(lines[i]);
+    if (!m) {
+      rest.push(lines[i]);
+      continue;
+    }
+    const parts = [m[2]];
+    while (i + 1 < lines.length && /^( {2,}|\t)\S/.test(lines[i + 1])) {
+      parts.push(lines[++i].trim());
+    }
+    defs.set(m[1], parts.join(' ').trim());
+  }
+  return { rest: rest.join('\n'), defs };
+}
+
 export function markdownToDocs(markdown: string): MdDoc {
-  const out: MdDoc = { text: '', paragraphs: [], runs: [], tables: [] };
+  const { rest, defs } = extractFootnoteDefs(markdown);
+  const usedDefs = new Set<string>();
+  const out: MdDoc = {
+    text: '',
+    paragraphs: [],
+    runs: [],
+    tables: [],
+    footnotes: [],
+  };
   // Inline content goes to the doc, or to a table cell while one is built.
   let cur: { text: string; runs: MdRun[] } = out;
 
@@ -85,7 +131,7 @@ export function markdownToDocs(markdown: string): MdDoc {
           if (t.tokens && t.tokens.length > 0) {
             pushInline(t.tokens, style);
           } else {
-            pushText(decodeEntities(t.text), style);
+            pushTextWithRefs(decodeEntities(t.text), style);
           }
           break;
         }
@@ -129,6 +175,38 @@ export function markdownToDocs(markdown: string): MdDoc {
           );
       }
     }
+  };
+
+  const pushTextWithRefs = (text: string, style: InlineStyle) => {
+    let last = 0;
+    for (const m of text.matchAll(FOOTNOTE_REF)) {
+      pushText(text.slice(last, m.index), style);
+      last = m.index! + m[0].length;
+      const def = defs.get(m[1]);
+      if (def === undefined) {
+        throw new UnsupportedMarkdownError(
+          `Footnote reference ${m[0]} has no definition; add a line "${m[0]}: footnote text". (To write the characters literally, escape the bracket.)`,
+        );
+      }
+      if (cur !== out) {
+        throw new UnsupportedMarkdownError(
+          'Footnotes inside table cells are not supported by Google Docs.',
+        );
+      }
+      usedDefs.add(m[1]);
+      const note = markdownToDocs(def);
+      if (!isInline(note) && note.text !== '') {
+        throw new UnsupportedMarkdownError(
+          `Footnote ${m[0]} must be a single paragraph of inline markdown.`,
+        );
+      }
+      out.footnotes.push({
+        offset: out.text.length,
+        text: note.text.replace(/\n$/, ''),
+        runs: note.runs,
+      });
+    }
+    pushText(text.slice(last), style);
   };
 
   const pushText = (text: string, style: InlineStyle) => {
@@ -189,6 +267,8 @@ export function markdownToDocs(markdown: string): MdDoc {
           break;
         }
         case 'html': {
+          // Read-only markers from readMarkdown carry no content to write.
+          if (READ_ONLY_MARKER.test(tok.raw.trim())) break;
           const start = out.text.length;
           pushText(tok.raw.replace(/\n+$/, ''), {});
           endParagraph(start, { namedStyleType: 'NORMAL_TEXT', ...base });
@@ -281,7 +361,19 @@ export function markdownToDocs(markdown: string): MdDoc {
     }
   };
 
-  pushBlocks(marked.lexer(markdown, { gfm: true }), { quote: 0, listLevel: 0 });
+  pushBlocks(marked.lexer(rest, { gfm: true }), { quote: 0, listLevel: 0 });
+  for (const label of defs.keys()) {
+    if (!usedDefs.has(label)) {
+      throw new UnsupportedMarkdownError(
+        `Footnote definition [^${label}] has no reference [^${label}] in the text.`,
+      );
+    }
+  }
+  if (out.footnotes.length > 0 && out.tables.length > 0) {
+    throw new UnsupportedMarkdownError(
+      'Footnotes and tables in the same markdown are not supported; write them in separate calls.',
+    );
+  }
   return out;
 }
 
