@@ -27,6 +27,10 @@ export interface MdParagraph {
    * that table goes.
    */
   table?: number;
+  /** Empty paragraph drawn as a horizontal rule (a bottom border). */
+  hr?: boolean;
+  /** Empty placeholder paragraph where a page break goes. */
+  pageBreak?: boolean;
 }
 
 export interface MdRun {
@@ -35,6 +39,8 @@ export interface MdRun {
   bold?: boolean;
   italic?: boolean;
   strikethrough?: boolean;
+  underline?: boolean;
+  baseline?: 'SUPERSCRIPT' | 'SUBSCRIPT';
   code?: boolean;
   link?: string;
 }
@@ -70,6 +76,10 @@ const HEADINGS = [
   'HEADING_6',
 ];
 
+/** The markdown spellings of a page break: an invisible HTML comment, or pandoc's div. */
+const PAGE_BREAK =
+  /^(<!--\s*page-?break\s*-->|<div\s+style=["']\s*page-break-(?:after|before):\s*always;?\s*["']\s*>\s*<\/div>)$/i;
+
 export class UnsupportedMarkdownError extends Error {}
 
 export function markdownToDocs(markdown: string): MdDoc {
@@ -77,8 +87,47 @@ export function markdownToDocs(markdown: string): MdDoc {
   // Inline content goes to the doc, or to a table cell while one is built.
   let cur: { text: string; runs: MdRun[] } = out;
 
-  const pushInline = (tokens: Token[] | undefined, style: InlineStyle) => {
-    for (const tok of tokens ?? []) {
+  const pushInline = (tokens: Token[] | undefined, outer: InlineStyle) => {
+    let style = outer;
+    // Open <u>/<sup>/<sub> tags, innermost last; each needs a matching close
+    // tag later in this same token list, else it stays literal text.
+    const open: { tag: string; before: InlineStyle }[] = [];
+    const list = tokens ?? [];
+    for (let i = 0; i < list.length; i++) {
+      const tok = list[i];
+      if (tok.type === 'html') {
+        const m = /^<(\/?)(u|sup|sub)>$/i.exec(tok.raw.trim());
+        if (m) {
+          const tag = m[2].toLowerCase();
+          if (!m[1]) {
+            const closes = list
+              .slice(i + 1)
+              .some(
+                (t) =>
+                  t.type === 'html' &&
+                  t.raw.trim().toLowerCase() === `</${tag}>`,
+              );
+            if (closes) {
+              open.push({ tag, before: style });
+              style =
+                tag === 'u'
+                  ? { ...style, underline: true }
+                  : {
+                      ...style,
+                      baseline: tag === 'sup' ? 'SUPERSCRIPT' : 'SUBSCRIPT',
+                    };
+              continue;
+            }
+          } else {
+            const at = open.map((o) => o.tag).lastIndexOf(tag);
+            if (at >= 0) {
+              style = open[at].before;
+              open.length = at;
+              continue;
+            }
+          }
+        }
+      }
       switch (tok.type) {
         case 'text': {
           const t = tok as Tokens.Text;
@@ -191,7 +240,21 @@ export function markdownToDocs(markdown: string): MdDoc {
           }
           break;
         }
+        case 'hr':
+          endParagraph(out.text.length, {
+            namedStyleType: 'NORMAL_TEXT',
+            hr: true,
+            ...base,
+          });
+          break;
         case 'html': {
+          if (PAGE_BREAK.test(tok.raw.trim())) {
+            endParagraph(out.text.length, {
+              namedStyleType: 'NORMAL_TEXT',
+              pageBreak: true,
+            });
+            break;
+          }
           const start = out.text.length;
           pushText(tok.raw.replace(/\n+$/, ''), {});
           endParagraph(start, { namedStyleType: 'NORMAL_TEXT', ...base });
@@ -247,35 +310,19 @@ export function markdownToDocs(markdown: string): MdDoc {
     ordered: boolean,
     ctx: { quote: number; listLevel: number },
   ) => {
-    let first = true;
-    for (const child of item.tokens) {
-      if (child.type === 'list') {
-        const nested = child as Tokens.List;
-        for (const sub of nested.items) {
-          pushListItem(sub, nested.ordered, {
-            ...ctx,
-            listLevel: ctx.listLevel + 1,
-          });
-        }
-        continue;
-      }
-      if (child.type === 'space' || child.type === 'checkbox') continue;
-      if (child.type !== 'text' && child.type !== 'paragraph') {
-        throw new UnsupportedMarkdownError(
-          `Unsupported content inside a list item (${child.type}).`,
-        );
-      }
-      if (!first) {
-        throw new UnsupportedMarkdownError(
-          'List items with more than one paragraph are not supported.',
-        );
-      }
-      first = false;
-      const start = out.text.length;
+    // A list item is one Docs paragraph: further paragraphs and code blocks
+    // inside it are joined to it with line breaks (vertical tab), which keeps
+    // them under the same bullet and keeps numbering continuous.
+    let start = -1;
+    let nestedSeen = false;
+    const inItem = () => start >= 0;
+    const open = () => {
+      start = out.text.length;
       // createParagraphBullets reads nesting from leading tabs (and removes
       // them), so nested items start with one tab per level.
       out.text += '\t'.repeat(ctx.listLevel);
-      pushInline((child as Tokens.Text).tokens, {});
+    };
+    const close = () => {
       endParagraph(start, {
         namedStyleType: 'NORMAL_TEXT',
         bullet: {
@@ -285,7 +332,49 @@ export function markdownToDocs(markdown: string): MdDoc {
         },
         ...(ctx.quote > 0 ? { quote: ctx.quote } : {}),
       });
+      start = -1;
+    };
+    for (const child of item.tokens) {
+      if (child.type === 'space' || child.type === 'checkbox') continue;
+      if (child.type === 'list') {
+        if (inItem()) close();
+        nestedSeen = true;
+        const nested = child as Tokens.List;
+        for (const sub of nested.items) {
+          pushListItem(sub, nested.ordered, {
+            ...ctx,
+            listLevel: ctx.listLevel + 1,
+          });
+        }
+        continue;
+      }
+      if (
+        child.type !== 'text' &&
+        child.type !== 'paragraph' &&
+        child.type !== 'code'
+      ) {
+        throw new UnsupportedMarkdownError(
+          `Unsupported content inside a list item (${child.type}).`,
+        );
+      }
+      if (nestedSeen) {
+        throw new UnsupportedMarkdownError(
+          "A list item can't continue with more text after a nested list; put the text before the nested list.",
+        );
+      }
+      if (!inItem()) open();
+      else pushText('\u000b', {});
+      if (child.type === 'code') {
+        const lines = (child as Tokens.Code).text.split('\n');
+        lines.forEach((line, i) => {
+          if (i > 0) pushText('\u000b', {});
+          pushText(line, { code: true });
+        });
+      } else {
+        pushInline((child as Tokens.Text).tokens, {});
+      }
     }
+    if (inItem()) close();
   };
 
   pushBlocks(marked.lexer(markdown, { gfm: true }), { quote: 0, listLevel: 0 });
@@ -303,7 +392,9 @@ export function isInline(doc: MdDoc): boolean {
     !doc.paragraphs[0].bullet &&
     !doc.paragraphs[0].code &&
     !doc.paragraphs[0].quote &&
-    doc.paragraphs[0].table === undefined
+    doc.paragraphs[0].table === undefined &&
+    !doc.paragraphs[0].hr &&
+    !doc.paragraphs[0].pageBreak
   );
 }
 

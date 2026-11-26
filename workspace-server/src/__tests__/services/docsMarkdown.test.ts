@@ -176,7 +176,7 @@ describe('buildRequests', () => {
     const bullets = edit.requests.filter((r) => r.createParagraphBullets);
     expect(bullets).toHaveLength(1);
     expect(bullets[0].createParagraphBullets!.bulletPreset).toBe(
-      'NUMBERED_DECIMAL_ALPHA_ROMAN',
+      'NUMBERED_DECIMAL_NESTED',
     );
   });
 
@@ -247,6 +247,152 @@ describe('task lists', () => {
       L: { listProperties: { nestingLevels: [{ glyphSymbol: '\u274f' }] } },
     };
     expect(docsToMarkdown(content, lists)).toBe('- [ ] todo\n');
+  });
+});
+
+describe('multi-paragraph list items', () => {
+  it('joins continuation paragraphs and code with line breaks in one item', () => {
+    const md = markdownToDocs(
+      '1. a\n\n   more\n\n   ```\n   x\n   y\n   ```\n2. b',
+    );
+    expect(md.text).toBe('a\u000bmore\u000bx\u000by\nb\n');
+    expect(md.paragraphs).toHaveLength(2);
+    expect(md.runs.filter((r) => r.code)).toHaveLength(2);
+  });
+
+  it('rejects text after a nested list', () => {
+    expect(() => markdownToDocs('- a\n  - n\n\n  more')).toThrow(
+      UnsupportedMarkdownError,
+    );
+  });
+
+  it('reads line breaks in an item as indented continuation lines', () => {
+    const content: any[] = [
+      {
+        paragraph: {
+          bullet: { listId: 'L', nestingLevel: 0 },
+          elements: [{ textRun: { content: 'a\u000bb\n' } }],
+        },
+      },
+    ];
+    const lists = {
+      L: { listProperties: { nestingLevels: [{ glyphType: 'DECIMAL' }] } },
+    };
+    expect(docsToMarkdown(content, lists)).toBe('1. a  \n   b\n');
+  });
+});
+
+describe('underline, superscript, subscript', () => {
+  it('parses inline HTML tags into styles', () => {
+    const md = markdownToDocs(
+      'x<sup>2</sup> H<sub>**2**</sub>O <u>u</u> <sup>open',
+    );
+    expect(md.text).toBe('x2 H2O u <sup>open\n');
+    expect(md.runs).toEqual([
+      { start: 1, end: 2, baseline: 'SUPERSCRIPT' },
+      { start: 4, end: 5, baseline: 'SUBSCRIPT', bold: true },
+      { start: 7, end: 8, underline: true },
+    ]);
+  });
+
+  it('writes them as text styles and reads them back', () => {
+    const flat = flatten(body('One\n'));
+    const edit = insertAfter(
+      markdownToDocs('a<sup>b</sup><u>c</u>'),
+      flat.paragraphs[0],
+    );
+    const styles = edit.requests
+      .filter(
+        (r) =>
+          r.updateTextStyle?.textStyle?.baselineOffset ||
+          r.updateTextStyle?.textStyle?.underline,
+      )
+      .map((r) => r.updateTextStyle!.textStyle);
+    expect(styles).toEqual([
+      { baselineOffset: 'SUPERSCRIPT' },
+      { underline: true },
+    ]);
+    const content: any[] = [
+      {
+        paragraph: {
+          elements: [
+            { textRun: { content: 'a' } },
+            {
+              textRun: {
+                content: 'b',
+                textStyle: { baselineOffset: 'SUPERSCRIPT' },
+              },
+            },
+            { textRun: { content: 'c', textStyle: { underline: true } } },
+            {
+              textRun: {
+                content: 'l',
+                textStyle: { underline: true, link: { url: 'http://x' } },
+              },
+            },
+            { textRun: { content: '\n' } },
+          ],
+        },
+      },
+    ];
+    expect(docsToMarkdown(content, {})).toBe(
+      'a<sup>b</sup><u>c</u>[l](http://x)\n',
+    );
+  });
+});
+
+describe('horizontal rule and page break', () => {
+  it('writes --- as a bordered empty paragraph and reads it back', () => {
+    const md = markdownToDocs('a\n\n---\n\nb');
+    expect(md.text).toBe('a\n\nb\n');
+    expect(md.paragraphs[1].hr).toBe(true);
+    const flat = flatten(body('One\n'));
+    const edit = insertAfter(md, flat.paragraphs[0]);
+    const ruled = edit.requests.filter(
+      (r) => r.updateParagraphStyle?.paragraphStyle?.borderBottom,
+    );
+    expect(ruled).toHaveLength(1);
+    const content: any[] = [
+      { paragraph: { elements: [{ textRun: { content: 'a\n' } }] } },
+      {
+        paragraph: {
+          paragraphStyle: { borderBottom: { width: { magnitude: 1 } } },
+          elements: [{ textRun: { content: '\n' } }],
+        },
+      },
+      {
+        paragraph: {
+          elements: [{ horizontalRule: {} }, { textRun: { content: '\n' } }],
+        },
+      },
+    ];
+    expect(docsToMarkdown(content, {})).toBe('a\n\n---\n\n---\n');
+  });
+
+  it('writes a page break comment as insertPageBreak, back to front', () => {
+    const md = markdownToDocs('a\n\n<!-- pagebreak -->\n\nb');
+    expect(md.paragraphs[1].pageBreak).toBe(true);
+    const flat = flatten(body('One\n'));
+    const edit = insertAfter(md, flat.paragraphs[0]);
+    const pb = edit.requests.findIndex((r) => r.insertPageBreak);
+    expect(edit.requests[pb].insertPageBreak!.location!.index).toBe(7);
+    // placeholder newline removed since a paragraph follows
+    expect(edit.requests[pb + 1].deleteContentRange!.range).toMatchObject({
+      startIndex: 9,
+      endIndex: 10,
+    });
+    expect(edit.inserted).toEqual({
+      startIndex: 5,
+      endIndex: 5 + md.text.length + 1,
+    });
+    const content: any[] = [
+      {
+        paragraph: {
+          elements: [{ pageBreak: {} }, { textRun: { content: '\n' } }],
+        },
+      },
+    ];
+    expect(docsToMarkdown(content, {})).toBe('<!-- pagebreak -->\n');
   });
 });
 

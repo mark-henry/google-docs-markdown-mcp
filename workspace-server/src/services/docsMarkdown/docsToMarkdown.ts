@@ -7,6 +7,9 @@
 import { docs_v1 } from 'googleapis';
 
 /** Glyph symbols Docs uses for checklist bullets (❏ is the BULLET_CHECKBOX one). */
+/** What a page break reads as; markdownToDocs turns it back into one. */
+const PAGE_BREAK_MARKER = '<!-- pagebreak -->';
+
 const CHECKBOX_GLYPHS = /^[\u274f\u2610\u2611\u2612\u25a1\u25fb\u25a2]$/;
 
 /**
@@ -37,7 +40,10 @@ export function docsToMarkdown(
         // The API doesn't expose whether a checkbox is ticked, so every
         // checkbox item reads as unchecked.
         const task = !ordered && CHECKBOX_GLYPHS.test(nl?.glyphSymbol ?? '');
-        const item = `${'  '.repeat(level)}${ordered ? '1.' : '-'} ${task ? '[ ] ' : ''}${line}`;
+        const pad = '  '.repeat(level) + (ordered ? '   ' : '  ');
+        // Line breaks inside an item are continuation lines of that item.
+        const text = line.replace(/ {2}\n/g, `  \n${pad}`);
+        const item = `${'  '.repeat(level)}${ordered ? '1.' : '-'} ${task ? '[ ] ' : ''}${text}`;
         if (prevWasListItem) {
           blocks[blocks.length - 1] += '\n' + item;
         } else {
@@ -48,6 +54,11 @@ export function docsToMarkdown(
       }
       prevWasListItem = false;
 
+      // A rule drawn as a bottom border on an empty paragraph, or a page break.
+      if (!line.trim() && p.paragraphStyle?.borderBottom?.width?.magnitude) {
+        blocks.push('---');
+        continue;
+      }
       if (!line.trim()) continue;
       const heading = /^HEADING_(\d)$/.exec(style);
       if (heading) {
@@ -107,6 +118,10 @@ function renderInline(
         run = `{--${m[1]}--}${m[2]}`;
       }
       out += run;
+    } else if (pe.horizontalRule) {
+      out += '---';
+    } else if (pe.pageBreak) {
+      out += PAGE_BREAK_MARKER;
     } else if (pe.person?.personProperties) {
       const { name, email } = pe.person.personProperties;
       out += email ? `[${name || email}](mailto:${email})` : name || '';
@@ -130,6 +145,10 @@ function styleRun(text: string, s: docs_v1.Schema$TextStyle): string {
     s.weightedFontFamily?.fontFamily ?? '',
   );
   if (mono) core = '`' + core + '`';
+  // Inline HTML for what markdown lacks. A link's underline is Docs' own.
+  if (s.baselineOffset === 'SUPERSCRIPT') core = `<sup>${core}</sup>`;
+  else if (s.baselineOffset === 'SUBSCRIPT') core = `<sub>${core}</sub>`;
+  if (s.underline && !s.link?.url) core = `<u>${core}</u>`;
   if (s.strikethrough) core = `~~${core}~~`;
   if (s.italic) core = `*${core}*`;
   if (s.bold) core = `**${core}**`;

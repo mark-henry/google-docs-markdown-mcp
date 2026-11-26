@@ -112,19 +112,23 @@ All write tools take `tabId` (default: first tab) and `mode: "edit" | "suggest"`
 
 ### Supported markdown
 
-| Markdown                                     | Becomes                                                                                                                                                                                   |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `#` … `######`                               | Heading 1–6                                                                                                                                                                               |
-| `**bold**`, `*italic*`, `~~strike~~`         | Text styles                                                                                                                                                                               |
-| `` `code` ``, fenced code blocks             | Courier New                                                                                                                                                                               |
-| `[text](url)`                                | Link                                                                                                                                                                                      |
-| `- item`, `1. item`, nested with indentation | Native Docs bulleted and numbered lists                                                                                                                                                   |
-| `- [ ] task`                                 | Checklist item (`BULLET_CHECKBOX`). Always written unchecked: the Docs API can't set or read a checkbox's checked state, so `- [x]` becomes unchecked and checkboxes read back as `- [ ]` |
-| `> quote`                                    | Indented paragraph                                                                                                                                                                        |
-| Pending suggestions (read only)              | `{++inserted++}` `{--deleted--}` ([CriticMarkup](https://criticmarkup.com))                                                                                                               |
-| Tables                                       | Read only for now; writing one returns a clear error                                                                                                                                      |
+| Markdown                                       | Becomes                                                                                                                                                            |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `#` … `######`                                 | Heading 1–6                                                                                                                                                        |
+| `**bold**`, `*italic*`, `~~strike~~`           | Text styles                                                                                                                                                        |
+| `` `code` ``, fenced code blocks               | Courier New                                                                                                                                                        |
+| `[text](url)`                                  | Link                                                                                                                                                               |
+| `- item`, `1. item`, nested with indentation   | Native Docs bulleted and numbered lists. Numbered lists use the `1.` / `1.1.` / `1.1.1.` preset                                                                    |
+| `- [ ] task`                                   | Checklist item (`BULLET_CHECKBOX`), always unchecked: the API can't set or read checked state, so `- [x]` is written unchecked and checkboxes read back as `- [ ]` |
+| Several paragraphs or a code block in one item | Joined to the item with line breaks, so they stay under one bullet and numbering continues                                                                         |
+| `<u>x</u>`, `<sup>x</sup>`, `<sub>x</sub>`     | Underline, superscript, subscript (inline HTML, both directions). An unclosed tag stays literal text                                                               |
+| `---`                                          | Horizontal rule, drawn as an empty paragraph with a bottom border (the API has no rule request); reads back as `---`, and so does a native rule                    |
+| `<!-- pagebreak -->`                           | Page break (`insertPageBreak`; body only); reads back the same                                                                                                     |
+| `> quote`                                      | Indented paragraph                                                                                                                                                 |
+| Pending suggestions (read only)                | `{++inserted++}` `{--deleted--}` ([CriticMarkup](https://criticmarkup.com))                                                                                        |
+| Tables                                         | Read only for now; writing one returns a clear error                                                                                                               |
 
-Known limits: nested items under a numbered list use Google's numbered preset, so they show as a., b., c.; list items with more than one paragraph aren't supported; images aren't written.
+Known limits: checkbox state can't be set or read (the API has no field), so `- [x]` is written unchecked; Docs has no per-level numbering control, so a bullet nested under a numbered item is numbered too (`1.1.`) and a numbered item under a bullet shows a bullet; text can't follow a nested list inside the same item; a link's own underline isn't read back as `<u>`; images aren't written.
 
 ### How anchoring works
 

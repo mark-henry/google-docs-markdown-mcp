@@ -5,7 +5,7 @@
  */
 
 import { docs_v1 } from 'googleapis';
-import { MdDoc } from './markdownToDocs';
+import { MdDoc, MdParagraph } from './markdownToDocs';
 import { DocParagraph, FlatDoc } from './docIndex';
 
 type Request = docs_v1.Schema$Request;
@@ -16,6 +16,17 @@ const RESET_TEXT_FIELDS =
 
 const CODE_FONT = 'Courier New';
 const QUOTE_INDENT_PT = 36;
+
+/**
+ * The Docs API has no request that inserts a horizontal-rule element, so a
+ * rule is an empty paragraph with a bottom border (it reads back as `---`).
+ */
+const RULE_BORDER: docs_v1.Schema$ParagraphBorder = {
+  color: { color: { rgbColor: { red: 0.6, green: 0.6, blue: 0.6 } } },
+  width: { magnitude: 1, unit: 'PT' },
+  padding: { magnitude: 1, unit: 'PT' },
+  dashStyle: 'SOLID',
+};
 
 /**
  * What surrounds the new content in the doc, which decides whether the empty
@@ -190,8 +201,10 @@ function finishBlock(
           namedStyleType: p.namedStyleType,
           indentStart: { magnitude: indent, unit: 'PT' },
           indentFirstLine: { magnitude: indent, unit: 'PT' },
+          // Always listed so a border inherited from a neighbor is cleared.
+          ...(p.hr ? { borderBottom: RULE_BORDER } : {}),
         },
-        fields: 'namedStyleType,indentStart,indentFirstLine',
+        fields: 'namedStyleType,indentStart,indentFirstLine,borderBottom',
       },
     });
   }
@@ -242,17 +255,32 @@ function tableRequests(
   const requests: Request[] = [];
   let growth = 0;
   const paras = md.paragraphs;
-  for (let i = paras.length - 1; i >= 0; i--) {
-    const p = paras[i];
-    if (p.table === undefined) continue;
-    const table = md.tables[p.table];
-    const C = table.columns;
-    const R = table.rows.length;
-    // Bullet creation (earlier in the batch) removed the nesting tabs.
-    const tabsBefore = paras
+  // Bullet creation (earlier in the batch) removed the nesting tabs.
+  const tabsBefore = (p: MdParagraph) =>
+    paras
       .filter((q) => q.bullet && q.start < p.start)
       .reduce((n, q) => n + q.bullet!.level, 0);
-    const Q = base + p.start - tabsBefore;
+  for (let i = paras.length - 1; i >= 0; i--) {
+    const p = paras[i];
+    if (p.table === undefined && !p.pageBreak) continue;
+    if (p.pageBreak) {
+      // Docs inserts the break plus a newline at Q, so the placeholder's own
+      // newline ends up after them; remove it where a paragraph remains to
+      // follow (never right before a table, which Docs refuses).
+      const Q = base + p.start - tabsBefore(p);
+      requests.push({ insertPageBreak: { location: { index: Q, tabId } } });
+      growth += 2;
+      const next = paras[i + 1];
+      if (next ? next.table === undefined : around.followed) {
+        requests.push(deleteRange(Q + 2, Q + 3, tabId));
+        growth -= 1;
+      }
+      continue;
+    }
+    const table = md.tables[p.table!];
+    const C = table.columns;
+    const R = table.rows.length;
+    const Q = base + p.start - tabsBefore(p);
     const T = Q + 1;
     requests.push({
       insertTable: { rows: R, columns: C, location: { index: Q, tabId } },
@@ -311,6 +339,8 @@ function runStyles(
     if (r.bold) style.bold = true;
     if (r.italic) style.italic = true;
     if (r.strikethrough) style.strikethrough = true;
+    if (r.underline) style.underline = true;
+    if (r.baseline) style.baselineOffset = r.baseline;
     if (r.code) style.weightedFontFamily = { fontFamily: CODE_FONT };
     if (r.link) style.link = { url: r.link };
     out.push(textStyle(base + r.start, base + end, style, tabId));
@@ -344,7 +374,9 @@ function bulletRequests(md: MdDoc, base: number, tabId?: string): Request[] {
   }
   const PRESETS: Record<string, string> = {
     task: 'BULLET_CHECKBOX',
-    ordered: 'NUMBERED_DECIMAL_ALPHA_ROMAN',
+    // The only preset whose nested levels stay numeric (1. / 1.1. / 1.1.1.);
+    // the alternatives show a./b./c. at level 1 and i./ii. at level 2.
+    ordered: 'NUMBERED_DECIMAL_NESTED',
     bullet: 'BULLET_DISC_CIRCLE_SQUARE',
   };
   return groups.reverse().map((g) => ({
