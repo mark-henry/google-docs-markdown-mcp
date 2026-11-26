@@ -66,6 +66,9 @@ interface Struct {
 }
 type Tok = Ch | Struct;
 
+/** Private-use char standing for a page-break element (one index). */
+const PAGE_BREAK = '\uE000';
+
 const STRUCTURE = new Set(['sec', 'tbl', 'row', 'cell', 'end']);
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v ?? null));
@@ -165,6 +168,14 @@ const HANDLERS: Record<string, Handler> = {
       r.range?.endIndex ?? -1,
       r.bulletPreset ?? '',
     );
+  },
+  insertPageBreak: (doc, r: docs_v1.Schema$InsertPageBreakRequest) => {
+    doc.rejectTab(r.location?.tabId ?? r.endOfSegmentLocation?.tabId);
+    const index =
+      r.location?.index ??
+      (r.endOfSegmentLocation ? doc.length - 1 : undefined);
+    if (index == null) throw new FakeDocsError('insertPageBreak: no location');
+    doc.insertPageBreak(index);
   },
   deleteParagraphBullets: (
     doc,
@@ -276,6 +287,16 @@ export class FakeDoc {
     this.toks.splice(index, 0, newline(terminator.para), ...table);
   }
 
+  /**
+   * APPROX: a page break is one char token (PAGE_BREAK) so index arithmetic
+   * stays one token per index; like the real request it inserts the break
+   * followed by a newline at `index`.
+   */
+  insertPageBreak(index: number) {
+    this.assertTextPosition(index, 'insertPageBreak');
+    this.insertText(index, PAGE_BREAK + '\n');
+  }
+
   deleteRange(start: number, end: number) {
     if (!(start >= 1 && end > start && end <= this.toks.length - 1)) {
       throw new FakeDocsError(
@@ -358,13 +379,22 @@ export class FakeDoc {
       throw new FakeDocsError(`createParagraphBullets: unknown preset "${preset}"`);
     }
     const listId = `kix.fake${this.nextListId++}`;
-    const glyphs = ['DECIMAL', 'ALPHA', 'ROMAN'];
+    // APPROX: glyph types per preset as documented; real Docs also sets
+    // indents, which are not modeled.
+    const nested = preset === 'NUMBERED_DECIMAL_NESTED';
+    const glyphs = nested ? ['DECIMAL', 'DECIMAL', 'DECIMAL'] : ['DECIMAL', 'ALPHA', 'ROMAN'];
+    const checkbox = preset === 'BULLET_CHECKBOX';
     this.lists[listId] = {
       listProperties: {
         nestingLevels: Array.from({ length: 9 }, (_, level) =>
           ordered
-            ? { glyphType: glyphs[level % 3], glyphFormat: `%${level}.` }
-            : { glyphSymbol: ['●', '○', '■'][level % 3] },
+            ? {
+                glyphType: glyphs[level % 3],
+                glyphFormat: nested
+                  ? Array.from({ length: level + 1 }, (_, i) => `%${i}`).join('.') + '.'
+                  : `%${level}.`,
+              }
+            : { glyphSymbol: checkbox ? '\u274f' : ['●', '○', '■'][level % 3] },
         ),
       },
     };
@@ -527,6 +557,15 @@ export class FakeDoc {
     for (;; i++) {
       const tok = this.toks[i] as Ch;
       if (!tok || tok.k !== 'ch') throw new FakeDocsError('unterminated paragraph');
+      if (tok.c === PAGE_BREAK) {
+        flush();
+        elements.push({
+          startIndex: i,
+          endIndex: i + 1,
+          pageBreak: { textStyle: clone(tok.ts) },
+        });
+        continue;
+      }
       if (text && JSON.stringify(tok.ts) !== JSON.stringify(style)) flush();
       if (!text) {
         runStart = i;

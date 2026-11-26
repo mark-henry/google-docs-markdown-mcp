@@ -22,6 +22,10 @@ export function docsToMarkdown(
 ): string {
   const blocks: string[] = [];
   let prevWasListItem = false;
+  // Whether each enclosing list level is numbered, for nested indentation.
+  const ancestors: boolean[] = [];
+  let topKind = '';
+  let newList = false;
 
   for (const el of content ?? []) {
     if (el.paragraph) {
@@ -40,16 +44,27 @@ export function docsToMarkdown(
         // The API doesn't expose whether a checkbox is ticked, so every
         // checkbox item reads as unchecked.
         const task = !ordered && CHECKBOX_GLYPHS.test(nl?.glyphSymbol ?? '');
-        const pad = '  '.repeat(level) + (ordered ? '   ' : '  ');
+        // CommonMark needs a child indented to its parent's content column:
+        // 3 spaces under a numbered item, 2 under a bullet.
+        ancestors.length = Math.min(ancestors.length, level);
+        while (ancestors.length < level) ancestors.push(false);
+        const indent = ancestors.reduce((n, o) => n + (o ? 3 : 2), 0);
+        ancestors[level] = ordered;
+        const pad = ' '.repeat(indent + (ordered ? 3 : 2));
         // Line breaks inside an item are continuation lines of that item.
         const text = line.replace(/ {2}\n/g, `  \n${pad}`);
-        const item = `${'  '.repeat(level)}${ordered ? '1.' : '-'} ${task ? '[ ] ' : ''}${text}`;
-        if (prevWasListItem) {
+        const item = `${' '.repeat(indent)}${ordered ? '1.' : '-'} ${task ? '[ ] ' : ''}${text}`;
+        // A change of list kind at the top level starts a new list.
+        const kind = task ? 'task' : ordered ? 'ordered' : 'bullet';
+        if (level === 0 && topKind !== kind) newList = true;
+        if (level === 0) topKind = kind;
+        if (prevWasListItem && !newList) {
           blocks[blocks.length - 1] += '\n' + item;
         } else {
           blocks.push(item);
         }
         prevWasListItem = true;
+        newList = false;
         continue;
       }
       prevWasListItem = false;

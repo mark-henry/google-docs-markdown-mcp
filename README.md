@@ -128,7 +128,7 @@ All write tools take `tabId` (default: first tab) and `mode: "edit" | "suggest"`
 | Pending suggestions (read only)                | `{++inserted++}` `{--deleted--}` ([CriticMarkup](https://criticmarkup.com))                                                                                        |
 | Tables                                         | Read only for now; writing one returns a clear error                                                                                                               |
 
-Known limits: checkbox state can't be set or read (the API has no field), so `- [x]` is written unchecked; Docs has no per-level numbering control, so a bullet nested under a numbered item is numbered too (`1.1.`) and a numbered item under a bullet shows a bullet; text can't follow a nested list inside the same item; a link's own underline isn't read back as `<u>`; images aren't written.
+Known limits: checkbox state can't be set or read (the API has no field), so `- [x]` is written unchecked; Docs has no per-level numbering control, so a bullet nested under a numbered item is numbered too (`1.1.`) and a numbered item under a bullet shows a bullet (nested items always take the top-level item's preset); text can't follow a nested list inside the same item; a link's own underline isn't read back as `<u>`; images aren't written.
 
 ### How anchoring works
 

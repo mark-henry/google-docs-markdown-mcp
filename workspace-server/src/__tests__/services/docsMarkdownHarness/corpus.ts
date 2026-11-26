@@ -69,6 +69,40 @@ export const CORPUS: Fixture[] = [
   f('adjacent-bullet-and-numbered', '- a\n- b\n\n1. c\n1. d\n'),
   f('numbered-with-explicit-numbers', '1. a\n2. b\n3. c\n'),
 
+  // ---- task lists
+  f('task-list', '- [ ] one\n- [ ] two\n'),
+  f('task-list-nested', '- [ ] a\n  - [ ] b\n- [ ] c\n'),
+  f('task-list-checked', '- [x] done\n- [ ] todo\n'),
+  f('task-then-bullets', '- [ ] a\n\n- b\n\n- [ ] c\n'),
+  f('task-after-numbered', '1. a\n1. b\n\n- [ ] c\n'),
+
+  // ---- list items with several paragraphs
+  f('list-item-line-break', '1. a  \n   more\n1. b\n'),
+  f('list-item-two-paragraphs', '- a\n\n  more\n- b\n'),
+  f('list-item-code-block', '- a\n\n  ```\n  x\n  y\n  ```\n- b\n'),
+  f('nested-item-continuation', '- a\n  - b  \n    more\n'),
+  f('numbered-nested-continuation', '1. a\n   1. b  \n      more\n'),
+
+  // ---- underline, superscript, subscript
+  f('superscript', 'x<sup>2</sup> done\n'),
+  f('subscript', 'H<sub>2</sub>O\n'),
+  f('underline', 'an <u>underlined</u> word\n'),
+  f('underline-bold', 'a **<u>bold underline</u>** word\n'),
+  f('sup-in-list', '- m<sup>2</sup>\n- H<sub>2</sub>O\n'),
+  f('unclosed-tag', 'a <u>never closed\n'),
+
+  // ---- horizontal rule and page break
+  f('rule', 'Before.\n\n---\n\nAfter.\n'),
+  f('rule-at-end', 'Before.\n\n---\n'),
+  f('rule-at-start', '---\n\nAfter.\n'),
+  f('two-rules', 'a\n\n---\n\n---\n\nb\n'),
+  f('page-break', 'Before.\n\n<!-- pagebreak -->\n\nAfter.\n'),
+  f('page-break-at-end', 'Before.\n\n<!-- pagebreak -->\n'),
+  f('page-break-at-start', '<!-- pagebreak -->\n\nAfter.\n'),
+  f('page-break-before-table', 'a\n\n<!-- pagebreak -->\n\n| **x** |\n| --- |\n| 1 |\n'),
+  f('page-break-after-list', '- a\n- b\n\n<!-- pagebreak -->\n\nc\n'),
+  f('rule-and-break', 'a\n\n---\n\n<!-- pagebreak -->\n\nb\n'),
+
   // ---- code
   f('fenced-code', '```\nconst a = 1;\nconst b = 2;\n```\n'),
   f('fenced-code-with-lang', '```ts\nlet x: number = 1;\n```\n'),
@@ -115,28 +149,34 @@ export const CORPUS: Fixture[] = [
  */
 export const EXPECTED_DIFFERENCES: ExpectedDifference[] = [
   {
-    fixture: "nested-numbered-3-space",
-    actual: "1. a\n  1. b\n    1. c\n  1. d\n1. e\n",
-    reason:
-      "BUG (read side): docsToMarkdown indents nested items two spaces per level, but CommonMark needs three under a numbered item, so the read-back is flat when re-parsed; the nesting itself is intact in the doc, only the text is wrong.",
-  },
-  {
     fixture: "bullet-with-nested-numbered",
     actual: "- a\n  - b\n  - c\n- d\n",
     reason:
-      "BUG (write side): bulletRequests makes one createParagraphBullets call per run of consecutive items, with the preset of the first item, so nested numbered items under a bullet become bullets.",
+      "API LIMIT: Docs has no per-level glyph control and a nested item of the other kind cannot safely get its own createParagraphBullets call (the nesting depends on the leading tabs of one call), so nested items take the top-level item's preset: numbered items under a bullet read as bullets.",
   },
   {
     fixture: "numbered-with-nested-bullets",
-    actual: "1. a\n  1. b\n  1. c\n1. d\n",
+    actual: "1. a\n   1. b\n   1. c\n1. d\n",
     reason:
-      "BUG (write side): same as bullet-with-nested-numbered; nested bullets under a numbered item take the numbered preset. Read-back is also flat for the 2-space-indent reason in nested-numbered-3-space.",
+      "API LIMIT: same as bullet-with-nested-numbered; bullets nested under a numbered item take the numbered preset (NUMBERED_DECIMAL_NESTED, shown as 1.1.). Indentation now reads back correctly.",
   },
   {
-    fixture: "adjacent-bullet-and-numbered",
-    actual: "- a\n- b\n- c\n- d\n",
+    fixture: "task-list-checked",
+    actual: "- [ ] done\n- [ ] todo\n",
     reason:
-      "BUG (write side): a numbered list right after a bullet list lands in the same createParagraphBullets group, so it becomes bullets and the blank line between the lists is lost.",
+      "API LIMIT: the Docs API cannot set or read a checkbox's checked state, so `[x]` is written (and read back) as unchecked.",
+  },
+  {
+    fixture: "list-item-two-paragraphs",
+    actual: "- a  \n  more\n- b\n",
+    reason:
+      "By design: a second paragraph in a list item is stored as a line break inside the item's one paragraph (keeps the bullet and numbering), so it reads back as a hard break.",
+  },
+  {
+    fixture: "list-item-code-block",
+    actual: "- a  \n  `x`  \n  `y`\n- b\n",
+    reason:
+      "By design plus the known read-side gap: a code block in a list item becomes line-broken monospace lines, which read back as inline `code` per line (fenced blocks are not read back, see fenced-code).",
   },
   {
     fixture: "numbered-with-explicit-numbers",
