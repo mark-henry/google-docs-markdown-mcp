@@ -23,6 +23,18 @@ import {
   replaceParagraphs,
   Edit,
 } from './docsMarkdown/buildRequests';
+import {
+  findSection,
+  replaceSectionBody,
+  replaceWholeSection,
+  insertInSection,
+  moveSection,
+  elementsIn,
+  copyLosses,
+  commentsIn,
+  MoveTarget,
+} from './docsMarkdown/sections';
+import { planReplaceAll } from './docsMarkdown/replaceAll';
 import { docsToMarkdown } from './docsMarkdown/docsToMarkdown';
 import {
   discussionOf,
@@ -288,6 +300,7 @@ export class DocsMarkdownService {
     at,
     after,
     before,
+    section,
     tabId,
     mode = 'edit',
   }: {
@@ -296,15 +309,24 @@ export class DocsMarkdownService {
     at?: 'beginning' | 'end';
     after?: string;
     before?: string;
+    section?: string;
     tabId?: string;
     mode?: Mode;
   }) =>
     run('insertMarkdown', async () => {
-      const targets = [at, after, before].filter((x) => x !== undefined);
-      if (targets.length !== 1) {
-        throw new Error(
-          'Give exactly one of: at ("beginning" | "end"), after (quoted text), before (quoted text).',
-        );
+      if (section !== undefined) {
+        if (!at || after !== undefined || before !== undefined) {
+          throw new Error(
+            'With section, give `at` ("beginning" = right under the heading, "end" = after the section\'s last paragraph) and not after/before.',
+          );
+        }
+      } else {
+        const targets = [at, after, before].filter((x) => x !== undefined);
+        if (targets.length !== 1) {
+          throw new Error(
+            'Give exactly one of: at ("beginning" | "end"), after (quoted text), before (quoted text).',
+          );
+        }
       }
       const md = markdownToDocs(markdown);
       if (!md.text) throw new Error('Markdown is empty.');
@@ -314,7 +336,15 @@ export class DocsMarkdownService {
       const body = flat.paragraphs.filter((p) => p.container === 'body');
 
       let edit: Edit;
-      if (at === 'beginning') {
+      if (section !== undefined) {
+        edit = insertInSection(
+          md,
+          findSection(flat, section),
+          at!,
+          flat,
+          doc.tabId,
+        );
+      } else if (at === 'beginning') {
         edit = insertBefore(md, body[0], doc.tabId);
       } else if (at === 'end') {
         edit = insertAfter(md, body[body.length - 1], doc.tabId);
@@ -332,12 +362,16 @@ export class DocsMarkdownService {
   public replaceMarkdown = ({
     documentId,
     find,
+    section,
+    scope = 'body',
     markdown,
     tabId,
     mode = 'edit',
   }: {
     documentId: string;
-    find: string;
+    find?: string;
+    section?: string;
+    scope?: 'body' | 'whole';
     markdown: string;
     tabId?: string;
     mode?: Mode;
@@ -347,15 +381,38 @@ export class DocsMarkdownService {
       const docs = await this.client();
       const doc = await this.load(docs, documentId, tabId);
       const { flat } = doc;
-      const hit = findUnique(flat, find);
+      if ((find === undefined) === (section === undefined)) {
+        throw new Error(
+          'Give exactly one of: find (quoted text), section (heading).',
+        );
+      }
+      if (section !== undefined) {
+        const sec = findSection(flat, section);
+        const edit =
+          scope === 'whole'
+            ? replaceWholeSection(md, sec, flat, doc.tabId)
+            : replaceSectionBody(md, sec, flat, doc.tabId);
+        await this.apply(docs, doc, edit, mode);
+        const what =
+          scope === 'whole' ? 'section incl. heading' : 'section body';
+        return summary(
+          md.text
+            ? `Replaced (${what} of "${sec.title}")`
+            : `Deleted (${what} of "${sec.title}")`,
+          doc,
+          edit,
+          mode,
+        );
+      }
+      const hit = findUnique(flat, find!);
       const first = paragraphAt(flat, hit.start);
       const last = paragraphAt(flat, hit.end - 1);
 
       let edit: Edit;
-      let scope: string;
+      let where: string;
       if (md.text && isInline(md) && first === last && hit.end < last.end) {
         edit = replaceInline(md, hit.start, hit.end, doc.tabId);
-        scope = 'inline';
+        where = 'inline';
       } else {
         if (first.container !== last.container) {
           throw new Error(
@@ -363,10 +420,144 @@ export class DocsMarkdownService {
           );
         }
         edit = replaceParagraphs(md, first, last, flat, doc.tabId);
-        scope = `whole paragraph${first === last ? '' : 's'} containing the match`;
+        where = `whole paragraph${first === last ? '' : 's'} containing the match`;
       }
       await this.apply(docs, doc, edit, mode);
-      return summary(`Replaced (${scope})`, doc, edit, mode);
+      return summary(`Replaced (${where})`, doc, edit, mode);
+    });
+
+  public moveSection = ({
+    documentId,
+    section,
+    before,
+    after,
+    at,
+    allowLoss = false,
+    tabId,
+    mode = 'edit',
+  }: {
+    documentId: string;
+    section: string;
+    before?: string;
+    after?: string;
+    at?: 'beginning' | 'end';
+    allowLoss?: boolean;
+    tabId?: string;
+    mode?: Mode;
+  }) =>
+    run('moveSection', async () => {
+      const dests = [before, after, at].filter((x) => x !== undefined);
+      if (dests.length !== 1) {
+        throw new Error(
+          'Give exactly one destination: before (section heading), after (section heading; lands after that whole section), or at ("beginning" | "end").',
+        );
+      }
+      const docs = await this.client();
+      const doc = await this.load(docs, documentId, tabId);
+      const { flat } = doc;
+      const src = findSection(flat, section);
+      let target: MoveTarget;
+      if (before !== undefined) {
+        target = { before: findSection(flat, before) };
+        if (target.before.start >= src.start && target.before.start < src.end) {
+          throw new Error(
+            'The destination section is inside the section being moved.',
+          );
+        }
+      } else if (after !== undefined) {
+        target = { after: findSection(flat, after) };
+        if (target.after.start >= src.start && target.after.start < src.end) {
+          throw new Error(
+            'The destination section is inside the section being moved.',
+          );
+        }
+      } else {
+        target = { at: at! };
+      }
+      const content = elementsIn(
+        doc.tab.documentTab?.body?.content,
+        src.start,
+        src.end,
+      );
+      const md = markdownToDocs(
+        docsToMarkdown(content, doc.tab.documentTab?.lists ?? undefined),
+      );
+      const losses = copyLosses(flat, src, content, md);
+      if (losses.length && !allowLoss) {
+        throw new Error(
+          `Not moving "${src.title}": ${losses.join('; ')}. Nothing was changed. Pass allowLoss: true to move anyway.`,
+        );
+      }
+      const edit = moveSection(md, src, target, flat, doc.tabId);
+      const anchored = commentsIn(
+        src,
+        doc.discussion.comments
+          .filter((c) => c.status !== 'RESOLVED')
+          .map((c) => c.plainTextQuote ?? ''),
+      );
+      await this.apply(docs, doc, edit, mode);
+      const how = mode === 'suggest' ? ' as suggestions' : '';
+      const notes = [
+        'Rebuilt from markdown: headings, lists, tables, bold/italic/strikethrough/code and links are kept; colors, fonts, alignment, images and named ranges are not.',
+      ];
+      if (anchored.length) {
+        notes.push(
+          `${anchored.length} open comment thread${anchored.length === 1 ? ' is' : 's are'} anchored in the moved text and will lose ${anchored.length === 1 ? 'its' : 'their'} anchor.`,
+        );
+      }
+      if (losses.length) notes.push(`Moved despite: ${losses.join('; ')}.`);
+      return `Moved section "${src.title}"${how} in "${doc.title}" (tab ${doc.tabId}).\n${notes.join('\n')}`;
+    });
+
+  public replaceAll = ({
+    documentId,
+    find,
+    replacement,
+    expectedCount,
+    matchCase = true,
+    section,
+    tabId,
+    mode = 'edit',
+  }: {
+    documentId: string;
+    find: string;
+    replacement: string;
+    expectedCount?: number;
+    matchCase?: boolean;
+    section?: string;
+    tabId?: string;
+    mode?: Mode;
+  }) =>
+    run('replaceAll', async () => {
+      const docs = await this.client();
+      const doc = await this.load(docs, documentId, tabId);
+      const within = section
+        ? (() => {
+            const s = findSection(doc.flat, section);
+            return { start: s.start, end: s.end };
+          })()
+        : undefined;
+      const plan = planReplaceAll(doc.flat, find, replacement, {
+        matchCase,
+        within,
+        tabId: doc.tabId,
+      });
+      if (expectedCount !== undefined && plan.count !== expectedCount) {
+        throw new Error(
+          `Found ${plan.count} occurrence${plan.count === 1 ? '' : 's'} of ${JSON.stringify(find)}, but expectedCount is ${expectedCount}. Nothing was changed.`,
+        );
+      }
+      if (plan.count === 0) {
+        return `No occurrences of ${JSON.stringify(find)} in "${doc.title}"; nothing changed.`;
+      }
+      await this.apply(
+        docs,
+        doc,
+        { requests: plan.requests, inserted: { startIndex: 0, endIndex: 0 } },
+        mode,
+      );
+      const how = mode === 'suggest' ? ' as suggestions' : '';
+      return `Replaced ${plan.count} occurrence${plan.count === 1 ? '' : 's'} of ${JSON.stringify(find)}${how} in "${doc.title}" (tab ${doc.tabId}).`;
     });
 
   public comment = ({

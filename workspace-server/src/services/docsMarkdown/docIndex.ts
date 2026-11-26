@@ -17,6 +17,10 @@ export interface DocParagraph {
   end: number;
   /** Paragraphs in the same body or table cell share a container. */
   container: string;
+  /** Paragraph text without its trailing newline. */
+  text?: string;
+  /** namedStyleType, e.g. HEADING_2. */
+  style?: string;
 }
 
 /**
@@ -43,6 +47,7 @@ export function flatten(
   ) => {
     for (const el of elements ?? []) {
       if (el.paragraph) {
+        const textStart = flat.text.length;
         for (const pe of el.paragraph.elements ?? []) {
           const start = pe.startIndex ?? 0;
           if (pe.textRun?.content != null) {
@@ -63,6 +68,8 @@ export function flatten(
           start: el.startIndex ?? 0,
           end: el.endIndex ?? 0,
           container,
+          text: flat.text.slice(textStart).replace(/\n$/, ''),
+          style: el.paragraph.paragraphStyle?.namedStyleType ?? undefined,
         });
       } else if (el.table) {
         el.table.tableRows?.forEach((row, r) =>

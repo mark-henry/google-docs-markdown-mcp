@@ -99,8 +99,10 @@ claude mcp add --scope user gdocs-personal \
 | Tool                   | What it does                                                                                                                                                                         |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `docs.readMarkdown`    | Reads a tab as markdown. Text quoted from this output works as an anchor in the other tools.                                                                                         |
-| `docs.insertMarkdown`  | Inserts formatted paragraphs `at: "beginning" \| "end"`, or `after` / `before` the paragraph containing quoted text.                                                                 |
-| `docs.replaceMarkdown` | Replaces quoted text. Inline markdown replaces just the quote, so a heading stays a heading; block markdown replaces every paragraph the quote touches. Empty markdown deletes them. |
+| `docs.insertMarkdown`  | Inserts formatted paragraphs `at: "beginning" \| "end"`, or `after` / `before` the paragraph containing quoted text. With `section`, `at` means the start (under the heading) or end of that section. |
+| `docs.replaceMarkdown` | Replaces quoted text. Inline markdown replaces just the quote, so a heading stays a heading; block markdown replaces every paragraph the quote touches. Empty markdown deletes them. With `section` instead of `find`, replaces that section's body (`scope: "whole"` includes the heading; empty markdown then deletes the section). |
+| `docs.moveSection`     | Moves a section `before` / `after` another section or `at` the beginning / end, in one atomic batch. See "Sections and moves" below. |
+| `docs.replaceAll`      | Replaces every occurrence of a plain-text string (optionally within one `section`), returns the count, and fails without changes if `expectedCount` differs. Surrounding formatting is kept. |
 | `docs.comment`         | Adds a comment anchored to quoted text.                                                                                                                                              |
 | `docs.listComments`    | Lists comment threads (ID, open/resolved, quoted text, each post's author and time) and pending suggestions.                                                                         |
 | `docs.replyToComment`  | Replies to a thread by ID, and/or resolves or reopens it.                                                                                                                            |
@@ -124,6 +126,14 @@ All write tools take `tabId` (default: first tab) and `mode: "edit" | "suggest"`
 | Tables                                       | Read only for now; writing one returns a clear error                        |
 
 Known limits: nested items under a numbered list use Google's numbered preset, so they show as a., b., c.; list items with more than one paragraph aren't supported; images aren't written.
+
+### Sections and moves
+
+A section is a heading plus everything up to the next heading of the same or a higher level, so it includes its subsections. Name it by its heading text (`"Pricing"`) or with its level (`"## Pricing"`); the heading must match exactly one, and an ambiguous or missing match lists the candidates.
+
+The Docs API has no cut, paste or reorder request, so `docs.moveSection` reads the section, rebuilds it at the destination from markdown, and deletes the original, all in one `batchUpdate` pinned to the revision (and as suggestions in `suggest` mode). The later position in the document is edited first so the earlier indices hold. What survives: headings, lists, tables, bold, italic, strikethrough, code and links. What doesn't: colors, fonts, alignment, images, chips, footnotes, named ranges, and comment threads anchored in the moved text (the result says how many lose their anchor). The move is refused, changing nothing, if the section holds images, chips, footnotes, pending suggestions or text that doesn't survive the markdown round trip, unless you pass `allowLoss: true`. Moving a section under a different heading level doesn't change its heading levels.
+
+`docs.replaceAll` matches the exact text (case-sensitive unless `matchCase: false`), within paragraphs, and replaces with plain text. It inserts the new text at the end of each match and then deletes the match, so the match's formatting carries over. It builds those requests itself rather than using the API's `replaceAllText`, so the count it checks against `expectedCount` is exactly the number of edits it makes.
 
 ### How anchoring works
 

@@ -459,6 +459,12 @@ async function main() {
     .describe(
       '"edit" (default) changes the document; "suggest" records the change as suggestions for the owner to accept.',
     );
+  const mdSection = z
+    .string()
+    .optional()
+    .describe(
+      'Address a whole section by its heading text (or "## Heading" to pin the level). A section runs from the heading to the next heading of the same or higher level. The heading must match exactly one; on ambiguity the error lists the matches.',
+    );
   const quoteHelp =
     'Quote text exactly as it appears in the document (readMarkdown output, markdown markers included, is fine). It must match exactly one place; on ambiguity the error lists the matches.';
 
@@ -476,7 +482,7 @@ async function main() {
     'docs.insertMarkdown',
     {
       description:
-        'Inserts markdown into a Google Doc as formatted paragraphs (headings, paragraphs, bulleted/numbered/nested lists, code blocks, blockquotes; inline bold, italic, strikethrough, code, links). Give exactly one of `at`, `after`, `before`. New paragraphs go before or after the whole paragraph containing the quoted text. Atomic: fails without changing anything if the doc changed since it was read.',
+        'Inserts markdown into a Google Doc as formatted paragraphs (headings, paragraphs, bulleted/numbered/nested lists, code blocks, blockquotes; inline bold, italic, strikethrough, code, links). Give exactly one of `at`, `after`, `before`; or `section` (a heading) with `at`: "beginning" inserts right under that heading, "end" after the last paragraph of the section (a section runs to the next heading of the same or higher level). New paragraphs go before or after the whole paragraph containing the quoted text. Atomic: fails without changing anything if the doc changed since it was read.',
       inputSchema: {
         documentId: mdDocId,
         markdown: z.string().describe('The markdown to insert.'),
@@ -496,6 +502,7 @@ async function main() {
           .describe(
             `Insert before the paragraph containing this text. ${quoteHelp}`,
           ),
+        section: mdSection,
         tabId: mdTabId,
         mode: mdMode,
       },
@@ -507,16 +514,87 @@ async function main() {
     'docs.replaceMarkdown',
     {
       description:
-        "Replaces quoted text in a Google Doc with markdown. If the markdown is a single plain paragraph and the quote lies within one paragraph, only the quoted text is replaced (the paragraph keeps its style, e.g. a heading stays a heading). Otherwise every paragraph the quote touches is replaced by the markdown's paragraphs. Empty markdown deletes those paragraphs. To replace a whole section, quote from its heading through its last line.",
+        'Replaces quoted text in a Google Doc with markdown. If the markdown is a single plain paragraph and the quote lies within one paragraph, only the quoted text is replaced (the paragraph keeps its style, e.g. a heading stays a heading). Otherwise every paragraph the quote touches is replaced by the markdown\'s paragraphs. Empty markdown deletes those paragraphs. Instead of `find`, give `section` (a heading) to replace that section: by default its body (the heading stays); with scope "whole" the heading too, so the markdown should bring its own heading. Empty markdown with scope "whole" deletes the section.',
       inputSchema: {
         documentId: mdDocId,
-        find: z.string().describe(`Text to replace. ${quoteHelp}`),
+        find: z
+          .string()
+          .optional()
+          .describe(`Text to replace. ${quoteHelp} Give this or section.`),
+        section: mdSection,
+        scope: z
+          .enum(['body', 'whole'])
+          .optional()
+          .describe(
+            'With section: "body" (default) keeps the heading; "whole" replaces heading and body.',
+          ),
         markdown: z.string().describe('Replacement markdown.'),
         tabId: mdTabId,
         mode: mdMode,
       },
     },
     docsMarkdownService.replaceMarkdown,
+  );
+
+  registerTool(
+    'docs.moveSection',
+    {
+      description:
+        'Moves a section (a heading and everything under it, up to the next heading of the same or higher level) elsewhere in the tab: before another section, after another whole section, or to the beginning/end. The Docs API has no cut and paste, so the section is rebuilt at the destination from markdown and the original deleted, in one atomic batch. Headings, lists, tables, bold/italic/strikethrough/code and links survive; colors, fonts, alignment, images, named ranges and comment anchors do not. Refuses (changing nothing) if the section has images, chips, footnotes, pending suggestions or text that would not round-trip, unless allowLoss is true.',
+      inputSchema: {
+        documentId: mdDocId,
+        section: z.string().describe('Heading of the section to move.'),
+        before: z
+          .string()
+          .optional()
+          .describe('Heading of the section to move it in front of.'),
+        after: z
+          .string()
+          .optional()
+          .describe(
+            'Heading of the section to move it after (after that whole section, subsections included).',
+          ),
+        at: z
+          .enum(['beginning', 'end'])
+          .optional()
+          .describe('Move to the beginning or end of the tab.'),
+        allowLoss: z
+          .boolean()
+          .optional()
+          .describe('Move even if content would be lost. Default false.'),
+        tabId: mdTabId,
+        mode: mdMode,
+      },
+    },
+    docsMarkdownService.moveSection,
+  );
+
+  registerTool(
+    'docs.replaceAll',
+    {
+      description:
+        'Replaces every occurrence of a plain-text string in a Google Doc tab (or one section), keeping the surrounding formatting, in one atomic batch. Returns the count. Pass expectedCount to make it fail without changing anything if the number of matches differs. Plain text only and within paragraphs: use docs.replaceMarkdown for markdown or multi-paragraph edits.',
+      inputSchema: {
+        documentId: mdDocId,
+        find: z.string().describe('Exact text to find (no newlines).'),
+        replacement: z
+          .string()
+          .describe('Plain replacement text; empty deletes the matches.'),
+        expectedCount: z
+          .number()
+          .int()
+          .optional()
+          .describe('Safety check: fail if the match count differs.'),
+        matchCase: z
+          .boolean()
+          .optional()
+          .describe('Case-sensitive matching. Default true.'),
+        section: mdSection,
+        tabId: mdTabId,
+        mode: mdMode,
+      },
+    },
+    docsMarkdownService.replaceAll,
   );
 
   registerTool(

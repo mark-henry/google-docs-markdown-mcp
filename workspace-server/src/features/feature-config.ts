@@ -81,6 +81,8 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
       'docs.formatText',
       'docs.insertMarkdown',
       'docs.replaceMarkdown',
+      'docs.moveSection',
+      'docs.replaceAll',
       'docs.comment',
       'docs.replyToComment',
     ],
