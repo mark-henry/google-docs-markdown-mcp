@@ -100,6 +100,18 @@ export const CORPUS: Fixture[] = [
   f('table-escaped-pipe', '| **a** | **b** |\n| --- | --- |\n| x \\| y | 2 |\n'),
   f('table-after-heading', '## Data\n\n| **a** | **b** |\n| --- | --- |\n| 1 | 2 |\n'),
 
+  // ---- images (alt text is read-only in the Docs API, so fixtures use empty alt)
+  f('image-block', '![](https://example.com/a.png)\n'),
+  f('image-inline', 'before ![](https://example.com/a.png) after\n'),
+  f('image-two-in-paragraph', '![](https://example.com/a.png) and ![](https://example.com/b.png)\n'),
+  f('image-in-heading', '## Look ![](https://example.com/a.png)\n'),
+  f('image-in-bullet', '- item ![](https://example.com/a.png) end\n- plain\n'),
+  f('image-in-nested-bullet', '- a\n  - b ![](https://example.com/a.png) c\n'),
+  f('image-after-styled-text', 'some **bold** ![](https://example.com/a.png) text\n'),
+  f('image-linked', '[![](https://example.com/a.png)](https://example.com/page)\n'),
+  f('image-before-table', '![](https://example.com/a.png)\n\n| **a** | **b** |\n| --- | --- |\n| 1 | 2 |\n'),
+  f('image-url-with-parens', '![](https://example.com/a%281%29.png)\n'),
+
   // ---- escaping, html
   f('escaped-asterisks', 'not \\*italic\\* here\n'),
   f('literal-html', 'a <b>tag</b> here\n'),

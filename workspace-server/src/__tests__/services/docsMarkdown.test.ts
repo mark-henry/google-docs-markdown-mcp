@@ -76,10 +76,10 @@ describe('markdownToDocs', () => {
     expect(markdownToDocs('a \\*b\\* & <c>').text).toBe('a *b* & <c>\n');
   });
 
-  it('rejects tables loudly', () => {
-    expect(() => markdownToDocs('| a |\n|---|\n| 1 |')).toThrow(
-      UnsupportedMarkdownError,
-    );
+  it('parses tables into a placeholder paragraph', () => {
+    const md = markdownToDocs('| a |\n|---|\n| 1 |');
+    expect(md.tables).toHaveLength(1);
+    expect(md.paragraphs[0].table).toBe(0);
   });
 
   it('detects inline (single plain paragraph) markdown', () => {

@@ -16,7 +16,11 @@ import { FakeDoc } from './fakeDocs';
 
 /** Reads a (fake or real) document back the way docs_readMarkdown does. */
 export function readMarkdown(doc: docs_v1.Schema$Document): string {
-  return docsToMarkdown(doc.body?.content, doc.lists ?? undefined);
+  return docsToMarkdown(
+    doc.body?.content,
+    doc.lists ?? undefined,
+    doc.inlineObjects ?? undefined,
+  );
 }
 
 /** Appends markdown after the last body paragraph, as docs_insertMarkdown does. */

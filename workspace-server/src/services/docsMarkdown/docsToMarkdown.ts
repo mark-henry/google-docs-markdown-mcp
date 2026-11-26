@@ -156,7 +156,9 @@ function renderImage(
   const uri = opts.stableImages
     ? img?.sourceUri || id
     : img?.sourceUri || img?.contentUri || id;
-  return `![${alt}](${uri.replace(/\(/g, '%28').replace(/\)/g, '%29').replace(/ /g, '%20')})`;
+  const md = `![${alt}](${uri.replace(/\(/g, '%28').replace(/\)/g, '%29').replace(/ /g, '%20')})`;
+  const link = el.textStyle?.link?.url;
+  return link ? `[${md}](${link})` : md;
 }
 
 /** Wraps a run's text in markdown markers, keeping edge whitespace outside. */

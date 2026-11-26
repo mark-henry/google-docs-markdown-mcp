@@ -60,6 +60,8 @@ interface Ch {
   c: string;
   ts: TextStyle;
   para?: ParaProps;
+  /** An inline image: one index, a char for paragraph purposes. */
+  img?: { id: string; uri: string };
 }
 interface Struct {
   k: 'sec' | 'tbl' | 'row' | 'cell' | 'end';
@@ -130,6 +132,17 @@ const HANDLERS: Record<string, Handler> = {
     if (index == null) throw new FakeDocsError('insertTable: no location');
     doc.insertTable(index, r.rows ?? 0, r.columns ?? 0);
   },
+  insertInlineImage: (doc, r: docs_v1.Schema$InsertInlineImageRequest) => {
+    doc.rejectTab(r.location?.tabId ?? r.endOfSegmentLocation?.tabId);
+    if (r.objectSize) throw new FakeDocsError('insertInlineImage: objectSize');
+    if (r.location?.index == null) {
+      throw new FakeDocsError('insertInlineImage: needs location.index');
+    }
+    if (!/^https?:\/\//.test(r.uri ?? '')) {
+      throw new FakeDocsError('insertInlineImage: uri must be public http(s)');
+    }
+    doc.insertImage(r.location.index, r.uri!);
+  },
   deleteContentRange: (doc, r: docs_v1.Schema$DeleteContentRangeRequest) => {
     doc.rejectTab(r.range?.tabId);
     doc.deleteRange(r.range?.startIndex ?? -1, r.range?.endIndex ?? -1);
@@ -179,6 +192,7 @@ export class FakeDoc {
   private toks: Tok[] = [{ k: 'sec' }, newline()];
   private lists: Record<string, docs_v1.Schema$List> = {};
   private nextListId = 1;
+  private nextImageId = 1;
 
   /** Number of indices in the body (the final newline is at length - 1). */
   get length(): number {
@@ -217,10 +231,26 @@ export class FakeDoc {
   /** The document as the Docs API would return it (body + lists). */
   toDocument(): docs_v1.Schema$Document {
     const content = this.parseContainer(0, new Set()).content;
+    const inlineObjects: Record<string, docs_v1.Schema$InlineObject> = {};
+    for (const t of this.toks) {
+      if (t.k === 'ch' && t.img) {
+        inlineObjects[t.img.id] = {
+          inlineObjectProperties: {
+            embeddedObject: {
+              imageProperties: {
+                sourceUri: t.img.uri,
+                contentUri: `https://lh3.fake/expiring/${t.img.id}`,
+              },
+            },
+          },
+        };
+      }
+    }
     return {
       documentId: 'fake-doc',
       body: { content },
       lists: clone(this.lists),
+      inlineObjects,
     };
   }
 
@@ -255,6 +285,21 @@ export class FakeDoc {
           : { k: 'ch', c, ts: clone(inherit) },
     );
     this.toks.splice(index, 0, ...inserted);
+  }
+
+  /** APPROX: image fetch, sizing and alt text are not modeled. */
+  insertImage(index: number, uri: string) {
+    this.assertTextPosition(index, 'insertInlineImage');
+    const before = this.toks[index - 1];
+    const here = this.toks[index] as Ch;
+    const inherit =
+      before && before.k === 'ch' && before.c !== '\n' ? before.ts : here.ts;
+    this.toks.splice(index, 0, {
+      k: 'ch',
+      c: '\uFFFC',
+      ts: clone(inherit),
+      img: { id: `kix.img${this.nextImageId++}`, uri },
+    });
   }
 
   insertTable(index: number, rows: number, columns: number) {
@@ -527,6 +572,18 @@ export class FakeDoc {
     for (;; i++) {
       const tok = this.toks[i] as Ch;
       if (!tok || tok.k !== 'ch') throw new FakeDocsError('unterminated paragraph');
+      if (tok.img) {
+        flush();
+        elements.push({
+          startIndex: i,
+          endIndex: i + 1,
+          inlineObjectElement: {
+            inlineObjectId: tok.img.id,
+            textStyle: clone(tok.ts),
+          },
+        });
+        continue;
+      }
       if (text && JSON.stringify(tok.ts) !== JSON.stringify(style)) flush();
       if (!text) {
         runStart = i;
