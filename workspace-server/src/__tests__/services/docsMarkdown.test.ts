@@ -5,11 +5,7 @@
  */
 
 import { describe, it, expect } from '@jest/globals';
-import {
-  markdownToDocs,
-  isInline,
-  UnsupportedMarkdownError,
-} from '../../services/docsMarkdown/markdownToDocs';
+import { markdownToDocs, isInline } from '../../services/docsMarkdown/markdownToDocs';
 import {
   flatten,
   findUnique,
@@ -76,10 +72,14 @@ describe('markdownToDocs', () => {
     expect(markdownToDocs('a \\*b\\* & <c>').text).toBe('a *b* & <c>\n');
   });
 
-  it('rejects tables loudly', () => {
-    expect(() => markdownToDocs('| a |\n|---|\n| 1 |')).toThrow(
-      UnsupportedMarkdownError,
-    );
+  it('turns a table into a placeholder paragraph plus table cells', () => {
+    const md = markdownToDocs('| a |\n|---|\n| 1 |');
+    expect(md.tables).toHaveLength(1);
+    expect(md.tables[0].rows.map((r) => r.map((c) => c.text))).toEqual([
+      ['a'],
+      ['1'],
+    ]);
+    expect(md.paragraphs.some((p) => p.table === 0)).toBe(true);
   });
 
   it('detects inline (single plain paragraph) markdown', () => {
