@@ -76,10 +76,10 @@ describe('markdownToDocs', () => {
     expect(markdownToDocs('a \\*b\\* & <c>').text).toBe('a *b* & <c>\n');
   });
 
-  it('rejects tables loudly', () => {
-    expect(() => markdownToDocs('| a |\n|---|\n| 1 |')).toThrow(
-      UnsupportedMarkdownError,
-    );
+  it('parses tables into a placeholder paragraph', () => {
+    const md = markdownToDocs('| a |\n|---|\n| 1 |');
+    expect(md.tables).toHaveLength(1);
+    expect(md.paragraphs[0].table).toBe(0);
   });
 
   it('detects inline (single plain paragraph) markdown', () => {
@@ -213,6 +213,40 @@ describe('buildRequests', () => {
         },
       },
     ]);
+  });
+});
+
+describe('task lists', () => {
+  it('writes task items as BULLET_CHECKBOX groups, split from plain lists', () => {
+    const flat = flatten(body('One\n'));
+    const md = markdownToDocs('- [ ] a\n- [x] b\n  - nested\n- plain');
+    expect(md.text).toBe('a\nb\n\tnested\nplain\n');
+    expect(md.paragraphs.map((p) => p.bullet?.task)).toEqual([
+      true,
+      true,
+      undefined,
+      undefined,
+    ]);
+    const edit = insertAfter(md, flat.paragraphs[0]);
+    const presets = edit.requests
+      .filter((r) => r.createParagraphBullets)
+      .map((r) => r.createParagraphBullets!.bulletPreset);
+    expect(presets).toEqual(['BULLET_DISC_CIRCLE_SQUARE', 'BULLET_CHECKBOX']);
+  });
+
+  it('reads checkbox lists as unchecked task items', () => {
+    const content: any[] = [
+      {
+        paragraph: {
+          bullet: { listId: 'L', nestingLevel: 0 },
+          elements: [{ textRun: { content: 'todo\n' } }],
+        },
+      },
+    ];
+    const lists = {
+      L: { listProperties: { nestingLevels: [{ glyphSymbol: '\u274f' }] } },
+    };
+    expect(docsToMarkdown(content, lists)).toBe('- [ ] todo\n');
   });
 });
 

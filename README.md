@@ -112,16 +112,17 @@ All write tools take `tabId` (default: first tab) and `mode: "edit" | "suggest"`
 
 ### Supported markdown
 
-| Markdown                                     | Becomes                                                                     |
-| -------------------------------------------- | --------------------------------------------------------------------------- |
-| `#` … `######`                               | Heading 1–6                                                                 |
-| `**bold**`, `*italic*`, `~~strike~~`         | Text styles                                                                 |
-| `` `code` ``, fenced code blocks             | Courier New                                                                 |
-| `[text](url)`                                | Link                                                                        |
-| `- item`, `1. item`, nested with indentation | Native Docs bulleted and numbered lists                                     |
-| `> quote`                                    | Indented paragraph                                                          |
-| Pending suggestions (read only)              | `{++inserted++}` `{--deleted--}` ([CriticMarkup](https://criticmarkup.com)) |
-| Tables                                       | Read only for now; writing one returns a clear error                        |
+| Markdown                                     | Becomes                                                                                                                                                                                   |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `#` … `######`                               | Heading 1–6                                                                                                                                                                               |
+| `**bold**`, `*italic*`, `~~strike~~`         | Text styles                                                                                                                                                                               |
+| `` `code` ``, fenced code blocks             | Courier New                                                                                                                                                                               |
+| `[text](url)`                                | Link                                                                                                                                                                                      |
+| `- item`, `1. item`, nested with indentation | Native Docs bulleted and numbered lists                                                                                                                                                   |
+| `- [ ] task`                                 | Checklist item (`BULLET_CHECKBOX`). Always written unchecked: the Docs API can't set or read a checkbox's checked state, so `- [x]` becomes unchecked and checkboxes read back as `- [ ]` |
+| `> quote`                                    | Indented paragraph                                                                                                                                                                        |
+| Pending suggestions (read only)              | `{++inserted++}` `{--deleted--}` ([CriticMarkup](https://criticmarkup.com))                                                                                                               |
+| Tables                                       | Read only for now; writing one returns a clear error                                                                                                                                      |
 
 Known limits: nested items under a numbered list use Google's numbered preset, so they show as a., b., c.; list items with more than one paragraph aren't supported; images aren't written.
 

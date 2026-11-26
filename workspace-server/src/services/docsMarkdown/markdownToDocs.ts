@@ -17,7 +17,7 @@ export interface MdParagraph {
   /** Offset just past the paragraph's trailing '\n'. */
   end: number;
   namedStyleType: string;
-  bullet?: { ordered: boolean; level: number };
+  bullet?: { ordered: boolean; level: number; task?: boolean };
   /** Code-block line: whole paragraph rendered in a monospace font. */
   code?: boolean;
   /** Blockquote nesting depth (rendered as indentation). */
@@ -118,6 +118,9 @@ export function markdownToDocs(markdown: string): MdDoc {
         case 'html':
           // Docs has no HTML; an agent writing <x> means the literal text.
           pushText(tok.raw, style);
+          break;
+        case 'checkbox':
+          // The `[ ]` / `[x]` of a task item; the item carries the state.
           break;
         case 'br':
           // A soft line break inside a paragraph: Docs uses vertical tab.
@@ -256,7 +259,7 @@ export function markdownToDocs(markdown: string): MdDoc {
         }
         continue;
       }
-      if (child.type === 'space') continue;
+      if (child.type === 'space' || child.type === 'checkbox') continue;
       if (child.type !== 'text' && child.type !== 'paragraph') {
         throw new UnsupportedMarkdownError(
           `Unsupported content inside a list item (${child.type}).`,
@@ -275,7 +278,11 @@ export function markdownToDocs(markdown: string): MdDoc {
       pushInline((child as Tokens.Text).tokens, {});
       endParagraph(start, {
         namedStyleType: 'NORMAL_TEXT',
-        bullet: { ordered, level: ctx.listLevel },
+        bullet: {
+          ordered,
+          level: ctx.listLevel,
+          ...(item.task ? { task: true } : {}),
+        },
         ...(ctx.quote > 0 ? { quote: ctx.quote } : {}),
       });
     }

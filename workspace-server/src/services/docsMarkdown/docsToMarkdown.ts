@@ -6,6 +6,9 @@
 
 import { docs_v1 } from 'googleapis';
 
+/** Glyph symbols Docs uses for checklist bullets (❏ is the BULLET_CHECKBOX one). */
+const CHECKBOX_GLYPHS = /^[\u274f\u2610\u2611\u2612\u25a1\u25fb\u25a2]$/;
+
 /**
  * Renders a document tab as markdown in the same dialect markdownToDocs
  * accepts, without escaping, so text quoted from it works as an anchor.
@@ -25,11 +28,16 @@ export function docsToMarkdown(
 
       if (p.bullet) {
         const level = p.bullet.nestingLevel ?? 0;
-        const glyph =
-          lists?.[p.bullet.listId ?? '']?.listProperties?.nestingLevels?.[level]
-            ?.glyphType;
+        const nl =
+          lists?.[p.bullet.listId ?? '']?.listProperties?.nestingLevels?.[
+            level
+          ];
+        const glyph = nl?.glyphType;
         const ordered = !!glyph && glyph !== 'GLYPH_TYPE_UNSPECIFIED';
-        const item = `${'  '.repeat(level)}${ordered ? '1.' : '-'} ${line}`;
+        // The API doesn't expose whether a checkbox is ticked, so every
+        // checkbox item reads as unchecked.
+        const task = !ordered && CHECKBOX_GLYPHS.test(nl?.glyphSymbol ?? '');
+        const item = `${'  '.repeat(level)}${ordered ? '1.' : '-'} ${task ? '[ ] ' : ''}${line}`;
         if (prevWasListItem) {
           blocks[blocks.length - 1] += '\n' + item;
         } else {

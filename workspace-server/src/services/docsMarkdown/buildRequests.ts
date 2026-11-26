@@ -71,7 +71,10 @@ export function insertAfter(
   const requests: Request[] = [
     insertText(at, '\n' + md.text.slice(0, -1), tabId),
   ];
-  return finishBlock(md, at + 1, requests, tabId, { ...around, preceded: true });
+  return finishBlock(md, at + 1, requests, tabId, {
+    ...around,
+    preceded: true,
+  });
 }
 
 /**
@@ -320,25 +323,34 @@ function runStyles(
  * nesting, which shifts later indices, so groups are applied back to front.
  */
 function bulletRequests(md: MdDoc, base: number, tabId?: string): Request[] {
-  const groups: { start: number; end: number; ordered: boolean }[] = [];
+  const kindOf = (b: { ordered: boolean; task?: boolean }) =>
+    b.task ? 'task' : b.ordered ? 'ordered' : 'bullet';
+  const groups: { start: number; end: number; kind: string }[] = [];
   for (const p of md.paragraphs) {
     if (!p.bullet) continue;
     const g = groups[groups.length - 1];
-    // One group per run of consecutive items: splitting at an ordered/
-    // unordered change would drop the nesting of the later items. The
-    // preset follows the run's first (top-level) item.
-    if (g && g.end === p.start) {
+    // One group per run of consecutive items, split only where a top-level
+    // item changes kind (task / numbered / bulleted): splitting at a nested
+    // item would drop its nesting. The preset follows the group's first item.
+    if (
+      g &&
+      g.end === p.start &&
+      (p.bullet.level > 0 || kindOf(p.bullet) === g.kind)
+    ) {
       g.end = p.end;
     } else {
-      groups.push({ start: p.start, end: p.end, ordered: p.bullet.ordered });
+      groups.push({ start: p.start, end: p.end, kind: kindOf(p.bullet) });
     }
   }
+  const PRESETS: Record<string, string> = {
+    task: 'BULLET_CHECKBOX',
+    ordered: 'NUMBERED_DECIMAL_ALPHA_ROMAN',
+    bullet: 'BULLET_DISC_CIRCLE_SQUARE',
+  };
   return groups.reverse().map((g) => ({
     createParagraphBullets: {
       range: { startIndex: base + g.start, endIndex: base + g.end - 1, tabId },
-      bulletPreset: g.ordered
-        ? 'NUMBERED_DECIMAL_ALPHA_ROMAN'
-        : 'BULLET_DISC_CIRCLE_SQUARE',
+      bulletPreset: PRESETS[g.kind],
     },
   }));
 }
