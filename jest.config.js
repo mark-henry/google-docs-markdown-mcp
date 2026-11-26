@@ -56,5 +56,8 @@ module.exports = {
   ],
   coverageReporters: ['text', 'lcov', 'html'],
   testTimeout: 10000,
+  // 8 GB laptop: jest's default of cores-1 workers (~1.7 GB each under ts-jest)
+  // filled swap and caused a kernel panic on 2026-11-09.
+  maxWorkers: 2,
   verbose: true,
 };

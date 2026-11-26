@@ -22,6 +22,11 @@ export interface MdParagraph {
   code?: boolean;
   /** Blockquote nesting depth (rendered as indentation). */
   quote?: number;
+  /**
+   * Index into MdDoc.tables: this empty paragraph is a placeholder where
+   * that table goes.
+   */
+  table?: number;
 }
 
 export interface MdRun {
@@ -34,11 +39,24 @@ export interface MdRun {
   link?: string;
 }
 
+/** Inline content of one table cell; offsets are into `text`. */
+export interface MdCell {
+  text: string;
+  runs: MdRun[];
+}
+
+export interface MdTable {
+  /** rows[0] is the header row. Every row has `columns` cells. */
+  rows: MdCell[][];
+  columns: number;
+}
+
 export interface MdDoc {
   /** Every paragraph ends with '\n', so `text` does too (unless empty). */
   text: string;
   paragraphs: MdParagraph[];
   runs: MdRun[];
+  tables: MdTable[];
 }
 
 type InlineStyle = Omit<MdRun, 'start' | 'end'>;
@@ -55,7 +73,9 @@ const HEADINGS = [
 export class UnsupportedMarkdownError extends Error {}
 
 export function markdownToDocs(markdown: string): MdDoc {
-  const out: MdDoc = { text: '', paragraphs: [], runs: [] };
+  const out: MdDoc = { text: '', paragraphs: [], runs: [], tables: [] };
+  // Inline content goes to the doc, or to a table cell while one is built.
+  let cur: { text: string; runs: MdRun[] } = out;
 
   const pushInline = (tokens: Token[] | undefined, style: InlineStyle) => {
     for (const tok of tokens ?? []) {
@@ -113,10 +133,10 @@ export function markdownToDocs(markdown: string): MdDoc {
 
   const pushText = (text: string, style: InlineStyle) => {
     if (!text) return;
-    const start = out.text.length;
-    out.text += text;
+    const start = cur.text.length;
+    cur.text += text;
     if (Object.keys(style).length > 0) {
-      out.runs.push({ start, end: out.text.length, ...style });
+      cur.runs.push({ start, end: cur.text.length, ...style });
     }
   };
 
@@ -180,6 +200,30 @@ export function markdownToDocs(markdown: string): MdDoc {
             quote: ctx.quote + 1,
           });
           break;
+        case 'table': {
+          const t = tok as Tokens.Table;
+          const cell = (c: Tokens.TableCell, header: boolean): MdCell => {
+            const built: MdCell = { text: '', runs: [] };
+            cur = built;
+            pushInline(c.tokens, header ? { bold: true } : {});
+            cur = out;
+            return built;
+          };
+          const rows = [
+            t.header.map((c) => cell(c, true)),
+            ...t.rows.map((r) => r.map((c) => cell(c, false))),
+          ];
+          const columns = Math.max(...rows.map((r) => r.length));
+          for (const r of rows) {
+            while (r.length < columns) r.push({ text: '', runs: [] });
+          }
+          out.tables.push({ rows, columns });
+          endParagraph(out.text.length, {
+            namedStyleType: 'NORMAL_TEXT',
+            table: out.tables.length - 1,
+          });
+          break;
+        }
         case 'list': {
           const list = tok as Tokens.List;
           for (const item of list.items) {
@@ -189,7 +233,7 @@ export function markdownToDocs(markdown: string): MdDoc {
         }
         default:
           throw new UnsupportedMarkdownError(
-            `Unsupported markdown block (${tok.type}). Supported: headings, paragraphs, bulleted/numbered lists, code blocks, blockquotes, and inline bold/italic/strikethrough/code/links.`,
+            `Unsupported markdown block (${tok.type}). Supported: headings, paragraphs, bulleted/numbered lists, tables, code blocks, blockquotes, and inline bold/italic/strikethrough/code/links.`,
           );
       }
     }
@@ -251,13 +295,26 @@ export function isInline(doc: MdDoc): boolean {
     doc.paragraphs[0].namedStyleType === 'NORMAL_TEXT' &&
     !doc.paragraphs[0].bullet &&
     !doc.paragraphs[0].code &&
-    !doc.paragraphs[0].quote
+    !doc.paragraphs[0].quote &&
+    doc.paragraphs[0].table === undefined
   );
 }
 
 /** The plain text the markdown would produce, without the final newline. */
 export function markdownToPlain(markdown: string): string {
-  return markdownToDocs(markdown).text.replace(/\n$/, '').replace(/\t/g, '');
+  const md = markdownToDocs(markdown);
+  // A table reads, in document order, as each cell's text plus its newline.
+  let text = '';
+  for (const p of md.paragraphs) {
+    text +=
+      p.table === undefined
+        ? md.text.slice(p.start, p.end)
+        : md.tables[p.table].rows
+            .flat()
+            .map((c) => c.text + '\n')
+            .join('');
+  }
+  return text.replace(/\n$/, '').replace(/\t/g, '');
 }
 
 function decodeEntities(s: string): string {

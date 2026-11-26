@@ -17,6 +17,20 @@ const RESET_TEXT_FIELDS =
 const CODE_FONT = 'Courier New';
 const QUOTE_INDENT_PT = 36;
 
+/**
+ * What surrounds the new content in the doc, which decides whether the empty
+ * paragraphs Docs leaves around an inserted table can be removed: a table
+ * needs a paragraph before it and after it.
+ */
+export interface Surroundings {
+  /** A body paragraph ends right where the new content starts. */
+  preceded: boolean;
+  /** A body paragraph starts right after the new content's last newline. */
+  followed: boolean;
+}
+
+const OPEN: Surroundings = { preceded: false, followed: false };
+
 export interface Edit {
   requests: Request[];
   /** Doc range the new content occupies after the edit. */
@@ -24,9 +38,14 @@ export interface Edit {
 }
 
 /** Insert block markdown as new paragraphs before paragraph `p`. */
-export function insertBefore(md: MdDoc, p: DocParagraph, tabId?: string): Edit {
+export function insertBefore(
+  md: MdDoc,
+  p: DocParagraph,
+  tabId?: string,
+  around: Surroundings = OPEN,
+): Edit {
   const requests: Request[] = [insertText(p.start, md.text, tabId)];
-  return finishBlock(md, p.start, requests, tabId);
+  return finishBlock(md, p.start, requests, tabId, around);
 }
 
 /**
@@ -34,20 +53,25 @@ export function insertBefore(md: MdDoc, p: DocParagraph, tabId?: string): Edit {
  * p's own newline works whether or not p is the last paragraph of its body or
  * table cell, which a plain insert at p.end would not.
  */
-export function insertAfter(md: MdDoc, p: DocParagraph, tabId?: string): Edit {
+export function insertAfter(
+  md: MdDoc,
+  p: DocParagraph,
+  tabId?: string,
+  around: Surroundings = OPEN,
+): Edit {
   if (p.end - p.start === 1) {
     // p is empty (just its newline), as in a new doc: fill it rather than
     // leaving a blank line above the new content.
     const requests: Request[] = [
       insertText(p.start, md.text.slice(0, -1), tabId),
     ];
-    return finishBlock(md, p.start, requests, tabId);
+    return finishBlock(md, p.start, requests, tabId, around);
   }
   const at = p.end - 1;
   const requests: Request[] = [
     insertText(at, '\n' + md.text.slice(0, -1), tabId),
   ];
-  return finishBlock(md, at + 1, requests, tabId);
+  return finishBlock(md, at + 1, requests, tabId, { ...around, preceded: true });
 }
 
 /**
@@ -61,6 +85,7 @@ export function replaceParagraphs(
   last: DocParagraph,
   flat: FlatDoc,
   tabId?: string,
+  around: Surroundings = OPEN,
 ): Edit {
   const requests: Request[] = [];
   if (md.text === '') {
@@ -71,7 +96,27 @@ export function replaceParagraphs(
   }
   const body = md.text.slice(0, -1);
   if (body) requests.push(insertText(first.start, body, tabId));
-  return finishBlock(md, first.start, requests, tabId);
+  return finishBlock(md, first.start, requests, tabId, around);
+}
+
+/**
+ * Replace the body range [start, tableEnd), which ends with a whole table,
+ * with block markdown. The paragraph after the table is kept and follows the
+ * new content.
+ */
+export function replaceThroughTable(
+  md: MdDoc,
+  start: number,
+  tableEnd: number,
+  tabId?: string,
+  preceded = false,
+): Edit {
+  const requests: Request[] = [deleteRange(start, tableEnd, tabId)];
+  if (md.text === '') {
+    return { requests, inserted: { startIndex: start, endIndex: start } };
+  }
+  requests.push(insertText(start, md.text, tabId));
+  return finishBlock(md, start, requests, tabId, { preceded, followed: true });
 }
 
 /** Replace [start, end) inside a paragraph with inline markdown. */
@@ -125,6 +170,7 @@ function finishBlock(
   base: number,
   requests: Request[],
   tabId?: string,
+  around: Surroundings = OPEN,
 ): Edit {
   const end = base + md.text.length;
   requests.push({
@@ -163,7 +209,89 @@ function finishBlock(
   }
   requests.push(...runStyles(md, base, tabId));
   requests.push(...bulletRequests(md, base, tabId));
-  return { requests, inserted: { startIndex: base, endIndex: end } };
+  const tables = tableRequests(md, base, tabId, around);
+  requests.push(...tables.requests);
+  const tabs = md.paragraphs
+    .filter((p) => p.bullet)
+    .reduce((n, p) => n + p.bullet!.level, 0);
+  return {
+    requests,
+    inserted: { startIndex: base, endIndex: end - tabs + tables.growth },
+  };
+}
+
+/**
+ * Tables go in after everything else, back to front, each into its
+ * placeholder paragraph. Docs inserts a newline before a new table, so the
+ * table at Q sits at Q + 1 and its cells' paragraphs at fixed offsets from
+ * there (verified against the live API): cell (r, c) of a C-column table at T
+ * has its paragraph at T + 3 + r * (1 + 2C) + 2c, and the empty table is
+ * 2 + R * (1 + 2C) long. Cells are filled back to front, so earlier offsets
+ * hold. The empty paragraphs left on either side are then removed where a
+ * paragraph remains to hold the table's place.
+ */
+function tableRequests(
+  md: MdDoc,
+  base: number,
+  tabId: string | undefined,
+  around: Surroundings,
+): { requests: Request[]; growth: number } {
+  const requests: Request[] = [];
+  let growth = 0;
+  const paras = md.paragraphs;
+  for (let i = paras.length - 1; i >= 0; i--) {
+    const p = paras[i];
+    if (p.table === undefined) continue;
+    const table = md.tables[p.table];
+    const C = table.columns;
+    const R = table.rows.length;
+    // Bullet creation (earlier in the batch) removed the nesting tabs.
+    const tabsBefore = paras
+      .filter((q) => q.bullet && q.start < p.start)
+      .reduce((n, q) => n + q.bullet!.level, 0);
+    const Q = base + p.start - tabsBefore;
+    const T = Q + 1;
+    requests.push({
+      insertTable: { rows: R, columns: C, location: { index: Q, tabId } },
+    });
+    let filled = 0;
+    for (let r = R - 1; r >= 0; r--) {
+      for (let c = C - 1; c >= 0; c--) {
+        const cell = table.rows[r][c];
+        if (!cell.text) continue;
+        const at = T + 3 + r * (1 + 2 * C) + 2 * c;
+        filled += cell.text.length;
+        requests.push(insertText(at, cell.text, tabId));
+        requests.push(resetTextStyle(at, at + cell.text.length, tabId));
+        requests.push(
+          ...runStyles(
+            { text: cell.text, paragraphs: [], runs: cell.runs, tables: [] },
+            at,
+            tabId,
+          ),
+        );
+      }
+    }
+    const length = 2 + R * (1 + 2 * C) + filled;
+    growth += 1 + length;
+    const next = paras[i + 1];
+    const followed = next ? next.table === undefined : around.followed;
+    if (followed) {
+      // The placeholder's own newline, now just after the table.
+      requests.push(deleteRange(T + length, T + length + 1, tabId));
+      growth -= 1;
+    }
+    const prev = paras[i - 1];
+    const preceded = prev ? prev.table === undefined : around.preceded;
+    if (preceded) {
+      // Docs refuses to delete the newline right before a table, but
+      // deleting the previous paragraph's newline merges it with the new
+      // empty one and keeps the previous paragraph's style.
+      requests.push(deleteRange(Q - 1, Q, tabId));
+      growth -= 1;
+    }
+  }
+  return { requests, growth };
 }
 
 function runStyles(
