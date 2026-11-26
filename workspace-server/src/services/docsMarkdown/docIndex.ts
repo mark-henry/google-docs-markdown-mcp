@@ -5,10 +5,10 @@
  */
 
 import { docs_v1 } from 'googleapis';
-import { markdownToPlain } from './markdownToDocs';
+import { markdownToPlain, OBJECT_CHAR } from './markdownToDocs';
 
 /** Placeholder for non-text inline elements (chips, images, footnote refs). */
-export const OBJECT_CHAR = '￼';
+export { OBJECT_CHAR };
 
 export interface DocParagraph {
   /** Doc index of the paragraph's first character. */

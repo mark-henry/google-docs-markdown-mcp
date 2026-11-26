@@ -111,6 +111,8 @@ export class DocsMarkdownService {
       markdown: docsToMarkdown(
         doc.tab.documentTab?.body?.content,
         doc.tab.documentTab?.lists ?? undefined,
+        doc.tab.documentTab?.inlineObjects ?? undefined,
+        { stableImages: true },
       ),
     };
   }
@@ -166,7 +168,13 @@ export class DocsMarkdownService {
       const doc = await this.load(docs, documentId, tabId);
       const snap = this.snapshotOf(doc);
       this.snapshots.record(doc.id, doc.tabId, snap);
-      return `<!-- ${header(doc)} -->\n${snap.markdown}`;
+      // Images get viewable URLs here; the snapshot above keeps stable IDs.
+      const markdown = docsToMarkdown(
+        doc.tab.documentTab?.body?.content,
+        doc.tab.documentTab?.lists ?? undefined,
+        doc.tab.documentTab?.inlineObjects ?? undefined,
+      );
+      return `<!-- ${header(doc)} -->\n${markdown}`;
     });
 
   public listComments = ({

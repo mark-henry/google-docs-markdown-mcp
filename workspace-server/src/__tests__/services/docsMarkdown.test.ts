@@ -263,3 +263,134 @@ describe('docsToMarkdown', () => {
     ).toBe('## Head\n\na **bold** word\n\n- item\n');
   });
 });
+
+describe('images', () => {
+  const imgDoc = () => [
+    { startIndex: 0, endIndex: 1, sectionBreak: {} },
+    {
+      startIndex: 1,
+      endIndex: 8,
+      paragraph: {
+        elements: [
+          { startIndex: 1, endIndex: 4, textRun: { content: 'Hi ' } },
+          {
+            startIndex: 4,
+            endIndex: 5,
+            inlineObjectElement: { inlineObjectId: 'o1' },
+          },
+          { startIndex: 5, endIndex: 8, textRun: { content: ' x\n' } },
+        ],
+      },
+    },
+  ];
+  const objs: any = {
+    o1: {
+      inlineObjectProperties: {
+        embeddedObject: {
+          description: 'A [cat]',
+          imageProperties: {
+            contentUri: 'https://g/c?x=1',
+            sourceUri: 'https://e.com/a(1).png',
+          },
+        },
+      },
+    },
+  };
+
+  it('parses an image to a placeholder char and no style runs', () => {
+    const md = markdownToDocs('Hi ![alt](https://e.com/a.png) x');
+    expect(md.text).toBe('Hi \uFFFC x\n');
+    expect(md.images).toEqual([
+      { offset: 3, uri: 'https://e.com/a.png', alt: 'alt' },
+    ]);
+  });
+
+  it('rejects local paths, data URIs and table-cell images', () => {
+    expect(() => markdownToDocs('![a](./x.png)')).toThrow(
+      UnsupportedMarkdownError,
+    );
+    expect(() => markdownToDocs('![a](data:image/png;base64,AA)')).toThrow(
+      /public/,
+    );
+    expect(() =>
+      markdownToDocs('| a |\n|---|\n| ![a](https://e.com/a.png) |'),
+    ).toThrow(/table cells/);
+  });
+
+  it('swaps the placeholder for insertInlineImage, one index for one', () => {
+    const flat = flatten(body('One\n'));
+    const edit = insertAfter(
+      markdownToDocs('Hi ![a](https://e.com/a.png) x'),
+      flat.paragraphs[0],
+      'T',
+    );
+    // text inserted at 4 with '\n' prefix: placeholder at 4 + 1 + 3 = 8
+    const del = edit.requests.findIndex((r) => r.deleteContentRange);
+    expect(edit.requests[del].deleteContentRange!.range).toMatchObject({
+      startIndex: 8,
+      endIndex: 9,
+    });
+    expect(edit.requests[del + 1]).toEqual({
+      insertInlineImage: {
+        location: { index: 8, tabId: 'T' },
+        uri: 'https://e.com/a.png',
+      },
+    });
+    expect(edit.inserted).toEqual({
+      startIndex: 5,
+      endIndex: 5 + 'Hi \uFFFC x\n'.length,
+    });
+  });
+
+  it('accounts for nesting tabs removed by bullet creation', () => {
+    const flat = flatten(body('One\n'));
+    const edit = insertAfter(
+      markdownToDocs('- a\n  - b ![i](https://e.com/i.png)'),
+      flat.paragraphs[0],
+    );
+    const ins = edit.requests.find((r) => r.insertInlineImage)!;
+    // '\n' + 'a\n' + '\tb ' placeholder at doc 4+1+2+1+... minus the 1 tab
+    expect(ins.insertInlineImage!.location!.index).toBe(9);
+  });
+
+  it('reads images as ![alt](uri), counting them in the flat index', () => {
+    const md = docsToMarkdown(imgDoc() as any, undefined, objs);
+    expect(md).toBe('Hi ![A cat](https://e.com/a%281%29.png) x\n');
+    expect(
+      docsToMarkdown(imgDoc() as any, undefined, {
+        o1: {
+          inlineObjectProperties: {
+            embeddedObject: { imageProperties: { contentUri: 'https://g/c' } },
+          },
+        },
+      } as any),
+    ).toBe('Hi ![](https://g/c) x\n');
+    expect(
+      docsToMarkdown(imgDoc() as any, undefined, objs, { stableImages: true }),
+    ).toContain('a%281%29');
+    const stable = docsToMarkdown(
+      imgDoc() as any,
+      undefined,
+      {
+        o1: {
+          inlineObjectProperties: {
+            embeddedObject: { imageProperties: { contentUri: 'https://g/c' } },
+          },
+        },
+      } as any,
+      { stableImages: true },
+    );
+    expect(stable).toBe('Hi ![](o1) x\n');
+    const flat = flatten(imgDoc() as any);
+    expect(flat.text).toBe('Hi \uFFFC x\n');
+    expect(findUnique(flat, 'x')).toEqual({ start: 6, end: 7 });
+  });
+
+  it('an image-bearing anchor matches the placeholder', () => {
+    const flat = flatten(imgDoc() as any);
+    expect(findUnique(flat, 'Hi ![A cat](https://g/c) x')).toEqual({
+      start: 1,
+      end: 7,
+    });
+  });
+});

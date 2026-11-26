@@ -112,18 +112,19 @@ All write tools take `tabId` (default: first tab) and `mode: "edit" | "suggest"`
 
 ### Supported markdown
 
-| Markdown                                     | Becomes                                                                     |
-| -------------------------------------------- | --------------------------------------------------------------------------- |
-| `#` … `######`                               | Heading 1–6                                                                 |
-| `**bold**`, `*italic*`, `~~strike~~`         | Text styles                                                                 |
-| `` `code` ``, fenced code blocks             | Courier New                                                                 |
-| `[text](url)`                                | Link                                                                        |
-| `- item`, `1. item`, nested with indentation | Native Docs bulleted and numbered lists                                     |
-| `> quote`                                    | Indented paragraph                                                          |
-| Pending suggestions (read only)              | `{++inserted++}` `{--deleted--}` ([CriticMarkup](https://criticmarkup.com)) |
-| Tables                                       | Read only for now; writing one returns a clear error                        |
+| Markdown                                     | Becomes                                                                       |
+| -------------------------------------------- | ----------------------------------------------------------------------------- |
+| `#` … `######`                               | Heading 1–6                                                                   |
+| `**bold**`, `*italic*`, `~~strike~~`         | Text styles                                                                   |
+| `` `code` ``, fenced code blocks             | Courier New                                                                   |
+| `[text](url)`                                | Link                                                                          |
+| `- item`, `1. item`, nested with indentation | Native Docs bulleted and numbered lists                                       |
+| `> quote`                                    | Indented paragraph                                                            |
+| Pending suggestions (read only)              | `{++inserted++}` `{--deleted--}` ([CriticMarkup](https://criticmarkup.com))   |
+| `![alt](https://public-url)`                 | Inline image (PNG/JPEG/GIF, public URL, written only). Alt text isn't written |
+| Tables                                       | Read only for now; writing one returns a clear error                          |
 
-Known limits: nested items under a numbered list use Google's numbered preset, so they show as a., b., c.; list items with more than one paragraph aren't supported; images aren't written.
+Known limits: nested items under a numbered list use Google's numbered preset, so they show as a., b., c.; list items with more than one paragraph aren't supported; images are written only from public `http(s)` URLs (Docs fetches them itself; local files and `data:` URIs are rejected, and nothing is uploaded to Drive), and the Docs API has no way to set alt text, so it is read but never written. On read, images appear as `![alt](url)` using the URL the image was inserted from when Docs has it, else a signed content URL that expires in about 30 minutes and is tied to your account: it is for viewing, not for re-inserting. Images can't go inside table cells, footnotes or equations.
 
 ### How anchoring works
 

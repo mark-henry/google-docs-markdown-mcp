@@ -71,7 +71,10 @@ export function insertAfter(
   const requests: Request[] = [
     insertText(at, '\n' + md.text.slice(0, -1), tabId),
   ];
-  return finishBlock(md, at + 1, requests, tabId, { ...around, preceded: true });
+  return finishBlock(md, at + 1, requests, tabId, {
+    ...around,
+    preceded: true,
+  });
 }
 
 /**
@@ -132,6 +135,7 @@ export function replaceInline(
     requests.push(insertText(start, text, tabId));
     requests.push(resetTextStyle(start, start + text.length, tabId));
     requests.push(...runStyles(md, start, tabId, text.length));
+    requests.push(...imageRequests(md, start, tabId, () => 0));
   }
   return {
     requests,
@@ -209,6 +213,13 @@ function finishBlock(
   }
   requests.push(...runStyles(md, base, tabId));
   requests.push(...bulletRequests(md, base, tabId));
+  requests.push(
+    ...imageRequests(md, base, tabId, (off) =>
+      md.paragraphs
+        .filter((q) => q.bullet && q.start <= off)
+        .reduce((n, q) => n + q.bullet!.level, 0),
+    ),
+  );
   const tables = tableRequests(md, base, tabId, around);
   requests.push(...tables.requests);
   const tabs = md.paragraphs
@@ -265,7 +276,13 @@ function tableRequests(
         requests.push(resetTextStyle(at, at + cell.text.length, tabId));
         requests.push(
           ...runStyles(
-            { text: cell.text, paragraphs: [], runs: cell.runs, tables: [] },
+            {
+              text: cell.text,
+              paragraphs: [],
+              runs: cell.runs,
+              tables: [],
+              images: [],
+            },
             at,
             tabId,
           ),
@@ -311,6 +328,33 @@ function runStyles(
     if (r.code) style.weightedFontFamily = { fontFamily: CODE_FONT };
     if (r.link) style.link = { url: r.link };
     out.push(textStyle(base + r.start, base + end, style, tabId));
+  }
+  return out;
+}
+
+/**
+ * Each image's placeholder character is swapped for the image. The image
+ * takes exactly the placeholder's one index, so nothing after it shifts.
+ * `tabsBefore` is how many nesting tabs bullet creation removed ahead of the
+ * offset. The Docs API has no alt-text field on insertInlineImage and no
+ * request to set one later, so alt text is not written.
+ */
+function imageRequests(
+  md: MdDoc,
+  base: number,
+  tabId: string | undefined,
+  tabsBefore: (offset: number) => number,
+): Request[] {
+  const out: Request[] = [];
+  for (const img of [...md.images].reverse()) {
+    const at = base + img.offset - tabsBefore(img.offset);
+    out.push(deleteRange(at, at + 1, tabId));
+    out.push({
+      insertInlineImage: { location: { index: at, tabId }, uri: img.uri },
+    });
+    if (img.link) {
+      out.push(textStyle(at, at + 1, { link: { url: img.link } }, tabId));
+    }
   }
   return out;
 }

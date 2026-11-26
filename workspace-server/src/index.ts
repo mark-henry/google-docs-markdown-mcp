@@ -466,7 +466,7 @@ async function main() {
     'docs.readMarkdown',
     {
       description:
-        'Reads a Google Doc tab as markdown (headings, lists, bold/italic/strikethrough/code, links, tables). Quote text from this output as anchors for docs.insertMarkdown, docs.replaceMarkdown and docs.comment.',
+        'Reads a Google Doc tab as markdown (headings, lists, bold/italic/strikethrough/code, links, tables, images as ![alt](url)). Image URLs are for viewing: they expire in about 30 minutes and are tied to your account, so do not reuse them to insert. Quote text from this output as anchors for docs.insertMarkdown, docs.replaceMarkdown and docs.comment.',
       inputSchema: { documentId: mdDocId, tabId: mdTabId },
     },
     docsMarkdownService.readMarkdown,
@@ -476,7 +476,7 @@ async function main() {
     'docs.insertMarkdown',
     {
       description:
-        'Inserts markdown into a Google Doc as formatted paragraphs (headings, paragraphs, bulleted/numbered/nested lists, code blocks, blockquotes; inline bold, italic, strikethrough, code, links). Give exactly one of `at`, `after`, `before`. New paragraphs go before or after the whole paragraph containing the quoted text. Atomic: fails without changing anything if the doc changed since it was read.',
+        'Inserts markdown into a Google Doc as formatted paragraphs (headings, paragraphs, bulleted/numbered/nested lists, code blocks, blockquotes; inline bold, italic, strikethrough, code, links, images). Images are `![alt](https://public-url)` (public PNG/JPEG/GIF only; local files and data: URIs are rejected; alt text cannot be set by the API, so it is dropped). Give exactly one of `at`, `after`, `before`. New paragraphs go before or after the whole paragraph containing the quoted text. Atomic: fails without changing anything if the doc changed since it was read.',
       inputSchema: {
         documentId: mdDocId,
         markdown: z.string().describe('The markdown to insert.'),

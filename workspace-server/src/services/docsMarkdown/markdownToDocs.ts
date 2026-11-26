@@ -51,12 +51,32 @@ export interface MdTable {
   columns: number;
 }
 
+/** Placeholder character for non-text inline elements (chips, images). */
+export const OBJECT_CHAR = '\uFFFC';
+
+/** A public image URL to insert inline; Docs allows 2 kB of URI. */
+export const MAX_IMAGE_URI = 2000;
+
+/**
+ * An inline image. `text[offset]` is a placeholder OBJECT_CHAR that the
+ * request builder swaps for the image: one index in, one index out, so every
+ * other offset stays valid.
+ */
+export interface MdImage {
+  offset: number;
+  uri: string;
+  alt: string;
+  /** Link the image sits inside, if any. */
+  link?: string;
+}
+
 export interface MdDoc {
   /** Every paragraph ends with '\n', so `text` does too (unless empty). */
   text: string;
   paragraphs: MdParagraph[];
   runs: MdRun[];
   tables: MdTable[];
+  images: MdImage[];
 }
 
 type InlineStyle = Omit<MdRun, 'start' | 'end'>;
@@ -73,7 +93,13 @@ const HEADINGS = [
 export class UnsupportedMarkdownError extends Error {}
 
 export function markdownToDocs(markdown: string): MdDoc {
-  const out: MdDoc = { text: '', paragraphs: [], runs: [], tables: [] };
+  const out: MdDoc = {
+    text: '',
+    paragraphs: [],
+    runs: [],
+    tables: [],
+    images: [],
+  };
   // Inline content goes to the doc, or to a table cell while one is built.
   let cur: { text: string; runs: MdRun[] } = out;
 
@@ -113,6 +139,32 @@ export function markdownToDocs(markdown: string): MdDoc {
         case 'link': {
           const l = tok as Tokens.Link;
           pushInline(l.tokens, { ...style, link: l.href });
+          break;
+        }
+        case 'image': {
+          const img = tok as Tokens.Image;
+          if (cur !== out) {
+            throw new UnsupportedMarkdownError(
+              'Images inside table cells are not supported.',
+            );
+          }
+          if (!/^https?:\/\//i.test(img.href)) {
+            throw new UnsupportedMarkdownError(
+              `Image ${JSON.stringify(img.href)} is not a public http(s) URL. Docs fetches the image itself, so local files and data: URIs can't be inserted; host the image at a public URL.`,
+            );
+          }
+          if (img.href.length > MAX_IMAGE_URI) {
+            throw new UnsupportedMarkdownError(
+              `Image URL is longer than ${MAX_IMAGE_URI} characters, which Docs rejects.`,
+            );
+          }
+          out.images.push({
+            offset: out.text.length,
+            uri: img.href,
+            alt: decodeEntities(img.text),
+            ...(style.link ? { link: style.link } : {}),
+          });
+          out.text += OBJECT_CHAR;
           break;
         }
         case 'html':
@@ -233,7 +285,7 @@ export function markdownToDocs(markdown: string): MdDoc {
         }
         default:
           throw new UnsupportedMarkdownError(
-            `Unsupported markdown block (${tok.type}). Supported: headings, paragraphs, bulleted/numbered lists, tables, code blocks, blockquotes, and inline bold/italic/strikethrough/code/links.`,
+            `Unsupported markdown block (${tok.type}). Supported: headings, paragraphs, bulleted/numbered lists, tables, code blocks, blockquotes, and inline bold/italic/strikethrough/code/links/images.`,
           );
       }
     }
